@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>房间管理 · 管理员</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="admin-wrap">
+    <div class="admin-head">
+      <h1>🐾 房间管理</h1>
+      <div class="links">
+        <a href="/">← 回到聊天</a>
+        <a href="#" id="logoutLink" class="hidden">退出登录</a>
+      </div>
+    </div>
+
+    <!-- 登录 -->
+      <div class="card" id="loginCard">
+        <h2>🐱 管理员登录</h2>
+        <div class="login-row">
+          <span class="pw-wrap">
+            <input id="adminPw" type="text" class="secure" placeholder="管理员密码喵~" autocomplete="new-password" />
+            <button type="button" class="pw-toggle" id="adminPwToggle" aria-label="显示或隐藏密码" title="显示/隐藏密码"></button>
+          </span>
+          <button class="btn" id="loginBtn">登录喵~</button>
+        </div>
+        <label class="remember"><input type="checkbox" id="rememberPw" /> 记住密码喵~</label>
+        <p class="hint">管理员密码由环境变量 <code>ADMIN_PASSWORD</code> 设置，默认 <code>admin123</code>（公网部署请务必修改喵~）。</p>
+        <p class="err" id="loginErr"></p>
+      </div>
+
+    <!-- 管理面板 -->
+    <div id="panel" class="hidden">
+      <div class="card">
+        <h2>🌸 创建房间</h2>
+        <div class="form-row">
+          <input class="room" id="newRoom" placeholder="房间名（字母/数字/_-@.）喵~" autocomplete="off" />
+          <span class="pw-wrap">
+            <input class="pw secure" id="newPw" type="text" placeholder="密码（可选，留空则无需密码）喵~" autocomplete="new-password" />
+            <button type="button" class="pw-toggle" id="newPwToggle" aria-label="显示或隐藏密码" title="显示/隐藏密码"></button>
+          </span>
+          <button class="btn" id="createBtn">创建喵~</button>
+        </div>
+        <p class="err" id="createErr"></p>
+      </div>
+
+      <div class="card">
+        <div class="admin-head" style="margin-bottom:10px;">
+          <h2 style="margin:0;">📋 房间列表</h2>
+          <button class="btn ghost sm" id="refreshBtn">刷新喵~</button>
+        </div>
+        <div id="roomTable"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+services:
+  browser-relay:
+    build: .
+    container_name: browser-relay
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=3000
+      - MAX_UPLOAD_MB=10
+      - ADMIN_PASSWORD=admin123

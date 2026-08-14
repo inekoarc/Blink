@@ -1,0 +1,17 @@
+{
+  "name": "browser-relay",
+  "version": "1.0.0",
+  "description": "纯浏览器实时通信服务：多设备跨端互发文字与图片，无需安装客户端",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "multer": "^2.0.0",
+    "ws": "^8.18.0"
+  }
+}

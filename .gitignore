@@ -1,0 +1,9 @@
+node_modules/
+data/
+uploads/
+preview/
+.cloudstudio
+.codebuddy/
+.workbuddy/
+*.log
+.DS_Store

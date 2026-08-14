@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>跨设备通信</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <!-- 右下角低调管理员入口 -->
+  <a href="/admin.html" class="corner-link">管理员</a>
+
+  <!-- 进入房间 -->
+  <div id="join" class="join-screen">
+    <div class="join-card">
+      <h1>🐱 跨设备通信</h1>
+      <p class="sub">在同一房间号下，任意设备打开本页就能互发文字、图片和文件喵~</p>
+      <label>房间号
+        <input id="roomInput" placeholder="由管理员创建的房间名喵~" autocomplete="off" />
+      </label>
+      <label>房间密码（若管理员设置了密码）
+        <span class="pw-wrap">
+          <input id="pwInput" type="text" class="secure" placeholder="留空则无需密码喵~" autocomplete="new-password" />
+          <button type="button" class="pw-toggle" id="pwToggle" aria-label="显示或隐藏密码" title="显示/隐藏密码"></button>
+        </span>
+      </label>
+      <button id="joinBtn" class="btn block">进入喵~</button>
+      <p id="joinErr" class="err"></p>
+    </div>
+  </div>
+
+  <!-- 聊天主界面 -->
+  <div id="chat" class="chat-screen hidden">
+    <header class="topbar">
+      <div class="room-info">
+        <span id="roomLabel" class="room-name"></span>
+        <span id="presence" class="presence"></span>
+      </div>
+      <div class="actions">
+        <button id="shareBtn" class="btn ghost sm" title="复制分享链接">分享</button>
+        <button id="leaveBtn" class="btn ghost sm" title="离开房间">退出</button>
+      </div>
+    </header>
+    <div id="messages" class="messages"></div>
+    <div id="status" class="status-bar"></div>
+    <footer class="composer">
+      <button id="imgBtn" class="btn ghost icon hidden" title="发送图片" aria-hidden="true">🖼️</button>
+      <input id="fileInput" type="file" accept="image/*" hidden />
+      <button id="fileBtn" class="btn ghost icon" title="发送文件">📎</button>
+      <input id="fileAllInput" type="file" hidden />
+      <input id="textInput" placeholder="输入消息，回车发送…" autocomplete="off" />
+      <button id="sendBtn" class="btn">发送</button>
+    </footer>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
