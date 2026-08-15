@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>自动隐藏滚动条 · 演示</title>
+<style>
+  :root {
+    --bg: #15121d;
+    --panel: #1e1a29;
+    --panel-2: #281f38;
+    --accent: #ff7eb6;
+    --accent-strong: #ff5ca0;
+    --text: #f3eef9;
+    --muted: #9a8fb0;
+    --border: #322a45;
+
+    /* 滚动条令牌（自动隐藏用） */
+    --scrollbar-size: 8px;
+    --scrollbar-track: transparent;
+    --scrollbar-thumb: var(--border);
+    --scrollbar-thumb-hover: var(--accent);
+    --scrollbar-thumb-active: var(--accent-strong);
+    --scrollbar-radius: 4px;
+    /* ↓↓↓ 滚动条淡出时长配置：从完全显示到完全隐藏的过渡时间，建议 500ms~1000ms，调这里即可 ↓↓↓ */
+    --scrollbar-fade-duration: 700ms;
+    --scrollbar-fade-ease: ease-in-out;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: radial-gradient(1100px 560px at 50% -12%, rgba(255,126,182,.08), transparent 60%), var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  .wrap { max-width: 760px; margin: 0 auto; padding: 28px 16px 40px; }
+  h1 { font-size: 20px; margin-bottom: 6px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; }
+  .btn {
+    height: 36px; padding: 0 14px; font-size: 13px; font-weight: 600;
+    color: #2a0f1f; background: var(--accent); border: none; border-radius: 10px;
+    cursor: pointer; transition: background .15s;
+  }
+  .btn:hover { background: var(--accent-strong); }
+  .btn.ghost { color: var(--text); background: var(--panel-2); border: 1px solid var(--border); }
+  .toggle-state { color: var(--muted); font-size: 13px; }
+
+  /* ===== 自动隐藏滚动条（核心，可直接复制进项目） ===== */
+  .ah-scroll {
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;          /* Firefox：默认隐藏（无法做 opacity 过渡，直接显隐） */
+  }
+  .ah-scroll.scrolling { scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); }
+  /* ↑ 淡出时长配置统一在 :root 的 --scrollbar-fade-duration / --scrollbar-fade-ease（建议 500ms~1000ms） */
+
+  .ah-scroll::-webkit-scrollbar { width: var(--scrollbar-size); height: var(--scrollbar-size); }
+  .ah-scroll::-webkit-scrollbar-track { background: transparent; }
+  .ah-scroll::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);                /* 颜色常驻，靠透明度控制显隐 */
+    border-radius: var(--scrollbar-radius);
+    opacity: 0;                                        /* 默认隐藏 */
+    transition: opacity var(--scrollbar-fade-duration) var(--scrollbar-fade-ease),
+                background-color 0.2s ease;            /* 平滑淡出 + 悬停换色顺带过渡 */
+  }
+  .ah-scroll.scrolling::-webkit-scrollbar-thumb { opacity: 1; }
+  .ah-scroll::-webkit-scrollbar-thumb:hover,
+  .ah-scroll.scrolling::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+  .ah-scroll::-webkit-scrollbar-thumb:active { background: var(--scrollbar-thumb-active); }
+
+  /* 「常显」对照模式：去掉隐藏，滑块常驻 */
+  .ah-scroll.always {
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
+  .ah-scroll.always::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); }
+  /* 降低动态效果时不做渐变 */
+  @media (prefers-reduced-motion: reduce) {
+    .ah-scroll::-webkit-scrollbar-thumb { transition: none; }
+  }
+  /* ==================================================== */
+
+  .panel {
+    height: 420px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .msg { max-width: 78%; align-self: flex-start; }
+  .msg-time { color: var(--muted); font-size: 11px; margin-bottom: 3px; }
+  .msg-text {
+    background: var(--panel-2); border: 1px solid var(--border);
+    padding: 10px 13px; border-radius: 14px; border-top-left-radius: 5px;
+    word-break: break-word; white-space: pre-wrap;
+  }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 14px; line-height: 1.7; }
+  .hint code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>自动隐藏滚动条</h1>
+    <div class="sub">静止时滚动条隐形；鼠标悬停或开始滚动时平滑浮现，停止交互约 1.2 秒后淡出。</div>
+
+    <div class="toolbar">
+      <button class="btn ghost" id="toggleBtn">切换：常显 / 自动隐藏</button>
+      <span class="toggle-state" id="stateLabel">当前：自动隐藏</span>
+    </div>
+
+    <div class="panel ah-scroll" id="panel"></div>
+
+    <div class="hint">
+      提示：单纯把鼠标移入面板（不滚动）滚动条<strong>不会</strong>出现；只有真正滚动（滚轮 / 触控板 / 触摸滑动 / 拖动滚动条滑块 / 方向键）时才会平滑浮现，停止约 0.8 秒后自动淡出。<br/>
+      容器只需加 <code>.ah-scroll</code> 类，并用下方 JS 切换 <code>.scrolling</code> 即可，无需改动结构。
+    </div>
+  </div>
+
+<script>
+  // 生成演示内容
+  const panel = document.getElementById('panel');
+  const samples = [
+    '在静止状态下，滚动条完全隐形，界面更干净。',
+    '把鼠标移进来，滚动条会平滑淡入——注意过渡是柔和的，不突兀。',
+    '开始滚动，滚动条会一直跟着显示，停下约 1.2 秒后自动消失。',
+    '鼠标离开面板后也会延时隐藏，符合「用时出现、闲时隐身」的预期。',
+    '配色取自主题边界色，悬停/滚动时呼应主色（粉），与整体设计协调统一。',
+    'Firefox 走 scrollbar-color 简写，Chrome/Edge/Safari 走伪元素，双引擎兼容。',
+    '尊重 prefers-reduced-motion：会跳过渐变，直接显隐。',
+  ];
+  for (let i = 0; i < 40; i++) {
+    const m = document.createElement('div');
+    m.className = 'msg';
+    const t = document.createElement('div');
+    t.className = 'msg-time';
+    t.textContent = '示例 ' + (i + 1);
+    const b = document.createElement('div');
+    b.className = 'msg-text';
+    b.textContent = samples[i % samples.length];
+    m.appendChild(t); m.appendChild(b);
+    panel.appendChild(m);
+  }
+
+  // ===== 自动隐藏逻辑（核心，可直接复制进项目） =====
+  let hideTimer = null;
+  function reveal() {
+    if (panel.classList.contains('always')) return;
+    if (panel.scrollHeight <= panel.clientHeight) return;   // 内容不足不显示
+    panel.classList.add('scrolling');
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+  }
+  function hideSoon() {
+    if (panel.classList.contains('always')) return;
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      panel.classList.remove('scrolling');
+      hideTimer = null;
+    }, 800);
+  }
+  const isScrollKey = (e) =>
+    ['ArrowDown','ArrowUp','PageDown','PageUp','Home','End',' ','Spacebar'].includes(e.key);
+  function isOnScrollbar(e) {
+    const rect = panel.getBoundingClientRect();
+    return (e.clientX >= rect.left + panel.clientWidth - 1) ||
+           (e.clientY >= rect.top + panel.clientHeight - 1);
+  }
+  // 仅真实滚动才显示：滚轮 / 触摸滑动 / 方向键 / 拖动滚动条滑块
+  panel.addEventListener('wheel', () => { reveal(); hideSoon(); }, { passive: true });
+  panel.addEventListener('touchmove', () => { reveal(); hideSoon(); }, { passive: true });
+  panel.addEventListener('keydown', (e) => { if (isScrollKey(e)) { reveal(); hideSoon(); } });
+  panel.addEventListener('mousedown', (e) => { if (isOnScrollbar(e)) { reveal(); hideSoon(); } });
+  // 程序滚底只刷新隐藏计时，绝不让滚动条凭空出现
+  panel.addEventListener('scroll', () => {
+    if (panel.classList.contains('scrolling')) hideSoon();
+  }, { passive: true });
+
+  // 对照切换
+  const toggleBtn = document.getElementById('toggleBtn');
+  const stateLabel = document.getElementById('stateLabel');
+  toggleBtn.addEventListener('click', () => {
+    const on = panel.classList.toggle('always');
+    stateLabel.textContent = on ? '当前：常显（对照）' : '当前：自动隐藏';
+    if (on && hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    if (on) panel.classList.remove('scrolling');
+  });
+  // =================================================
+</script>
+</body>
+</html>

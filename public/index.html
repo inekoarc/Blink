@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>跨设备通信</title>
+  <title>Chaldeas</title>
+  <link rel="icon" type="image/x-icon" href="/logo.ico" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -13,8 +14,7 @@
   <!-- 进入房间 -->
   <div id="join" class="join-screen">
     <div class="join-card">
-      <h1>🐱 跨设备通信</h1>
-      <p class="sub">在同一房间号下，任意设备打开本页就能互发文字、图片和文件喵~</p>
+      <h1>Chaldeas</h1>
       <label>房间号
         <input id="roomInput" placeholder="由管理员创建的房间名喵~" autocomplete="off" />
       </label>
@@ -43,6 +43,21 @@
     </header>
     <div id="messages" class="messages"></div>
     <div id="status" class="status-bar"></div>
+
+    <!-- 粘贴/选择图片后的 inline 预览（微信风格） -->
+    <div id="imagePreviewArea" class="image-preview-area hidden">
+      <div class="image-preview-thumb-wrap">
+        <img id="imagePreviewThumb" alt="待发送图片" />
+        <button id="imagePreviewRemove" class="image-preview-remove" type="button" title="取消发送">✕</button>
+      </div>
+      <span class="image-preview-hint">点击缩略图可放大预览，按回车或点击发送即可发出喵~</span>
+    </div>
+
+    <!-- 缩略图点击放大灯箱 -->
+    <div id="imageLightbox" class="image-lightbox hidden">
+      <img id="imageLightboxImg" alt="图片预览" />
+    </div>
+
     <footer class="composer">
       <button id="imgBtn" class="btn ghost icon hidden" title="发送图片" aria-hidden="true">🖼️</button>
       <input id="fileInput" type="file" accept="image/*" hidden />

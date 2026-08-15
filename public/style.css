@@ -27,6 +27,18 @@
   --radius-card: 16px;
   --radius-control: 12px;
   --radius-pill: 999px;
+
+  /* 滚动条令牌（自动隐藏用） */
+  --scrollbar-size: 8px;                                 /* 滚动条宽度 */
+  --scrollbar-track: transparent;                       /* 轨道：透明，不画框 */
+  --scrollbar-thumb: var(--border);                     /* 默认：低调边界色 */
+  --scrollbar-thumb-hover: var(--accent);               /* 悬停/滚动：主题主色 */
+  --scrollbar-thumb-active: var(--accent-strong);       /* 拖动：更深主色 */
+  --scrollbar-radius: 4px;                              /* 滑块圆角 */
+  --scrollbar-hide-delay: 800ms;                        /* 停止滚动后、开始淡出前的等待（JS 读取） */
+  /* ↓↓↓ 滚动条淡出时长配置：从完全显示到完全隐藏的过渡时间，建议 500ms~1000ms，调这里即可 ↓↓↓ */
+  --scrollbar-fade-duration: 700ms;                     /* 淡出动画时长（隐藏阶段应用） */
+  --scrollbar-fade-ease: ease-in-out;                   /* 淡出缓动，使渐隐更自然 */
 }
 
 html, body {
@@ -199,7 +211,7 @@ input::placeholder { color: var(--muted); opacity: 0.85; }
   padding: 38px 32px 34px;
   box-shadow: 0 22px 60px rgba(0, 0, 0, 0.32);
 }
-.join-card h1 { font-size: 23px; margin-bottom: 12px; letter-spacing: 0.2px; }
+.join-card h1 { font-size: 23px; margin-bottom: 12px; letter-spacing: 0.2px; text-align: center; }
 .join-card .sub { color: var(--muted); font-size: 14px; margin-bottom: 32px; line-height: 1.7; }
 .join-card label {
   display: flex;
@@ -244,14 +256,56 @@ input::placeholder { color: var(--muted); opacity: 0.85; }
   display: flex;
   flex-direction: column;
   gap: 12px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
 }
-/* 与深色主题协调的消息区滚动条（Chrome/Edge/Safari） */
-.messages::-webkit-scrollbar { width: 8px; }
-.messages::-webkit-scrollbar-track { background: transparent; }
-.messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-.messages::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+/* 自动隐藏滚动条：仅在实际滚动时浮现，停止后延时淡出（悬停不触发） */
+.messages,
+.ah-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;            /* Firefox：默认隐藏 */
+}
+.messages.scrolling,
+.ah-scroll.scrolling {
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* Chrome / Edge / Safari：用 opacity 做真正的渐隐（background-color 切换在伪元素上不可靠，会瞬间消失） */
+.messages::-webkit-scrollbar,
+.ah-scroll::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+.messages::-webkit-scrollbar-track,
+.ah-scroll::-webkit-scrollbar-track { background: transparent; }
+.messages::-webkit-scrollbar-thumb,
+.ah-scroll::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);                   /* 颜色常驻，靠透明度控制显隐 */
+  border-radius: var(--scrollbar-radius);
+  opacity: 0;                                            /* 默认隐藏 */
+  /* 隐藏阶段：透明度 1→0 的平滑淡出；时长/缓动由上方变量统一配置 */
+  transition: opacity var(--scrollbar-fade-duration) var(--scrollbar-fade-ease),
+              background-color 0.2s ease;                /* 悬停换色顺带过渡 */
+}
+.messages.scrolling::-webkit-scrollbar-thumb,
+.ah-scroll.scrolling::-webkit-scrollbar-thumb {
+  opacity: 1;                                            /* 滚动时出现 */
+}
+/* 拖动滑块或悬浮在滑块上时呼应主色（此时已显示，opacity 保持 1） */
+.messages::-webkit-scrollbar-thumb:hover,
+.ah-scroll::-webkit-scrollbar-thumb:hover,
+.messages.scrolling::-webkit-scrollbar-thumb:hover,
+.ah-scroll.scrolling::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+.messages::-webkit-scrollbar-thumb:active,
+.ah-scroll::-webkit-scrollbar-thumb:active {
+  background: var(--scrollbar-thumb-active);
+}
+
+/* 尊重「减少动态效果」偏好：直接显隐，不做渐变 */
+@media (prefers-reduced-motion: reduce) {
+  .messages::-webkit-scrollbar-thumb,
+  .ah-scroll::-webkit-scrollbar-thumb { transition: none; }
+}
 .msg { max-width: 78%; align-self: flex-start; }
 .msg-time { color: var(--muted); font-size: 11px; margin-bottom: 3px; }
 .msg-text {
@@ -456,4 +510,80 @@ td .ops { display: flex; gap: 8px; }
 @media (prefers-reduced-motion: reduce) {
   .btn, .pw-toggle, .corner-link { transition: none; }
   .shake { animation: none; }
+}
+
+/* ============================================================
+   粘贴/选择图片后的 inline 预览（微信风格）
+   ============================================================ */
+.image-preview-area {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.image-preview-thumb-wrap {
+  position: relative;
+  flex: none;
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+#imagePreviewThumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 10px;
+  cursor: zoom-in;
+}
+.image-preview-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: var(--err);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  transition: transform 0.12s, background 0.15s;
+}
+.image-preview-remove:hover { background: #ff5c6e; transform: scale(1.08); }
+.image-preview-remove:active { transform: scale(0.95); }
+.image-preview-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 缩略图点击放大灯箱 */
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(10, 7, 16, 0.8);
+  backdrop-filter: blur(4px);
+  cursor: zoom-out;
+}
+.image-lightbox img {
+  max-width: 92vw;
+  max-height: 92vh;
+  object-fit: contain;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
 }

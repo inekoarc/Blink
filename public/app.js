@@ -23,6 +23,15 @@
   const shareBtn = $('shareBtn');
   const leaveBtn = $('leaveBtn');
 
+  // 粘贴/选择图片后的 inline 预览（微信风格）
+  const imagePreviewArea = $('imagePreviewArea');
+  const imagePreviewThumb = $('imagePreviewThumb');
+  const imagePreviewRemove = $('imagePreviewRemove');
+  const imageLightbox = $('imageLightbox');
+  const imageLightboxImg = $('imageLightboxImg');
+  let pendingImageFile = null;
+  let pendingImageUrl = null;
+
   // 状态
   let ws = null;
   let currentRoom = null;
@@ -34,7 +43,21 @@
   // 从 URL 预填房间号
   const params = new URLSearchParams(location.search);
   const preRoom = params.get('room');
-  if (preRoom) roomInput.value = preRoom;
+
+  // 刷新后自动重连：sessionStorage 在同一标签页刷新间保留，关闭标签页则清除
+  const savedRoom = sessionStorage.getItem('relayRoom');
+  const savedPw = sessionStorage.getItem('relayPw') || '';
+  if (savedRoom) {
+    roomInput.value = savedRoom;
+    if (savedPw) {
+      pwInput.value = savedPw;
+      pwInput.dataset.touched = '1'; // 标记已填，避免被 clearStrayPw 清掉
+    }
+    // 延后到 load 之后触发，避免与 clearStrayPw 的定时清理冲突
+    setTimeout(() => doJoin(), 0);
+  } else if (preRoom) {
+    roomInput.value = preRoom;
+  }
 
   // 防止浏览器密码管家把保存的密码自动回填到「房间密码」框
   function clearStrayPw() {
@@ -73,6 +96,57 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
+  // 滚动条自动隐藏：仅在「实际滚动」时显示，悬停/程序滚底不触发；停止滚动后延时淡出
+  // 延时（开始淡出前的等待）与淡出时长均集中在 style.css 的 --scrollbar-hide-delay / --scrollbar-fade-duration，
+  // 这里从 CSS 变量读取，保证「改一处即可调」；解析失败时用兜底值。
+  const readMs = (name, fallback) => {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  let scrollHideTimer = null;
+  function revealScrollbar() {
+    if (!messagesEl || messagesEl.classList.contains('hidden')) return;
+    // 内容不足以滚动则不显示
+    if (messagesEl.scrollHeight <= messagesEl.clientHeight) return;
+    messagesEl.classList.add('scrolling');
+    if (scrollHideTimer) { clearTimeout(scrollHideTimer); scrollHideTimer = null; }
+  }
+  function hideScrollbarSoon() {
+    if (scrollHideTimer) clearTimeout(scrollHideTimer);
+    const HIDE_DELAY = readMs('--scrollbar-hide-delay', 800);   // 与 CSS 变量保持一致
+    scrollHideTimer = setTimeout(() => {
+      if (messagesEl) messagesEl.classList.remove('scrolling');  // 淡出动画由 CSS opacity 过渡负责
+      scrollHideTimer = null;
+    }, HIDE_DELAY);
+  }
+  const isScrollKey = (e) =>
+    ['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' ', 'Spacebar'].includes(e.key);
+  // 判断 mousedown 是否落在滚动条（右侧竖条 / 底部横条）区域内
+  function isOnScrollbar(e) {
+    const rect = messagesEl.getBoundingClientRect();
+    const onVertical = e.clientX >= rect.left + messagesEl.clientWidth - 1;
+    const onHorizontal = e.clientY >= rect.top + messagesEl.clientHeight - 1;
+    return onVertical || onHorizontal;
+  }
+
+  // 用户滚动来源：滚轮 / 触摸滑动 / 方向键 → 显示并延时隐藏
+  messagesEl.addEventListener('wheel', () => { revealScrollbar(); hideScrollbarSoon(); }, { passive: true });
+  messagesEl.addEventListener('touchmove', () => { revealScrollbar(); hideScrollbarSoon(); }, { passive: true });
+  messagesEl.addEventListener('keydown', (e) => {
+    if (isScrollKey(e)) { revealScrollbar(); hideScrollbarSoon(); }
+  });
+  // 拖动 / 点击滚动条滑块也算真实滚动：mousedown 落在滚动条区域即显示，抬起后延时隐藏
+  messagesEl.addEventListener('mousedown', (e) => {
+    if (isOnScrollbar(e)) { revealScrollbar(); hideScrollbarSoon(); }
+  });
+  // 程序滚底（新消息 / 图片加载）只刷新隐藏计时，绝不让滚动条凭空出现
+  messagesEl.addEventListener('scroll', () => {
+    if (messagesEl.classList.contains('scrolling')) hideScrollbarSoon();
+  }, { passive: true });
+  // 鼠标移出面板：立即开始淡出（与停止滚动同样走延时+opacity 过渡）
+  messagesEl.addEventListener('mouseleave', hideScrollbarSoon);
+
   // 判断文件名是否为可直接预览的图片（与服务端黑名单一致，svg 已被拦截）
   function isImageExt(name) {
     if (!name) return false;
@@ -103,7 +177,8 @@
       img.src = m.url;
       img.alt = m.name || '图片';
       img.className = 'msg-img';
-      img.loading = 'lazy';
+      img.onload = scrollToBottom;
+      img.onerror = scrollToBottom;
       a.appendChild(img);
       wrap.appendChild(a);
       if (m.name) {
@@ -123,7 +198,8 @@
         img.src = m.url;
         img.alt = m.name || '图片';
         img.className = 'msg-img';
-        img.loading = 'lazy';
+        img.onload = scrollToBottom;
+        img.onerror = scrollToBottom;
         a.appendChild(img);
         wrap.appendChild(a);
 
@@ -213,6 +289,8 @@
         (msg.messages || []).forEach(renderMessage);
         setStatus('');
         if (!joined) { joined = true; showChat(); }
+        // 聊天区显示后再滚到底部：隐藏时 scrollHeight 为 0，无法正确定位
+        scrollToBottom();
       } else if (msg.type === 'message') {
         renderMessage(msg.message);
       } else if (msg.type === 'presence') {
@@ -221,7 +299,7 @@
         // 密码错误等：退回登录页
         if (!joined) {
           joinErr.textContent = msg.msg;
-          showJoin();
+          showJoin(true); // 保留房间号，仅清密码
         } else {
           setStatus(msg.msg, 'err');
         }
@@ -257,6 +335,38 @@
     textInput.value = '';
   }
 
+  // 统一发送入口：有图片预览时先发图片，再把输入框文字作为 caption 发出
+  async function doSend() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const text = textInput.value.trim();
+    if (pendingImageFile) {
+      const f = pendingImageFile;
+      const caption = text;
+      clearImagePreview();
+      await sendImage(f);
+      if (caption) {
+        ws.send(JSON.stringify({ type: 'text', text: caption }));
+        textInput.value = '';
+      }
+    } else if (text) {
+      sendText();
+    }
+  }
+
+  // 规范化文件名：保留真实扩展名（选文件时），缺失时按 MIME 推断并补时间戳（粘贴图片时无文件名）
+  function pickName(file) {
+    const raw = (file && file.name) || '';
+    if (raw && /\.[a-z0-9]+$/i.test(raw)) return raw;
+    const t = file && file.type ? file.type.split('/')[1] : '';
+    let ext = '';
+    if (t) ext = t === 'jpeg' ? 'jpg' : t.replace('svg+xml', 'svg').replace('+xml', '');
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    const prefix = file && file.type && file.type.startsWith('image/') ? '图片' : '文件';
+    return `${prefix}_${ts}${ext ? '.' + ext : ''}`;
+  }
+
   async function sendImage(file) {
     if (!file) return;
     if (!file.type.startsWith('image/')) {
@@ -271,7 +381,7 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '上传失败');
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'image', url: data.url, name: data.name }));
+        ws.send(JSON.stringify({ type: 'image', url: data.url, name: pickName(file) }));
       }
       setStatus('');
     } catch (e) {
@@ -289,7 +399,7 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '上传失败');
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'file', url: data.url, name: data.name, size: data.size }));
+        ws.send(JSON.stringify({ type: 'file', url: data.url, name: pickName(file), size: data.size }));
       }
       setStatus('');
     } catch (e) {
@@ -305,13 +415,21 @@
     roomLabel.textContent = '房间：' + currentRoom;
   }
 
-  function showJoin() {
+  function showJoin(keepSession) {
     chatScreen.classList.add('hidden');
     joinScreen.classList.remove('hidden');
     document.body.classList.remove('chat-open');
     currentRoom = null;
+    if (!keepSession) {
+      sessionStorage.removeItem('relayRoom');
+      sessionStorage.removeItem('relayPw');
+    } else {
+      // 密码错误退回登录页：保留房间号，仅清掉（可能错误的）密码
+      sessionStorage.removeItem('relayPw');
+    }
     if (ws) { try { ws.close(); } catch {} ws = null; }
     messagesEl.innerHTML = '';
+    clearImagePreview();
   }
 
   async function doJoin() {
@@ -330,6 +448,9 @@
       if (data.requirePassword && !pwInput.value) throw new Error('这个房间需要密码喵~');
       currentRoom = room;
       currentPw = pwInput.value;
+      // 记入住址栏 + sessionStorage，刷新可自动重连
+      sessionStorage.setItem('relayRoom', room);
+      sessionStorage.setItem('relayPw', currentPw);
       joined = false;
       // 同步到 URL，方便分享
       const u = new URL(location.href);
@@ -356,13 +477,13 @@
   roomInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doJoin(); });
   pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doJoin(); });
 
-  sendBtn.addEventListener('click', sendText);
-  textInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendText(); });
+  sendBtn.addEventListener('click', doSend);
+  textInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSend(); });
 
   imgBtn.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', (e) => {
     const f = e.target.files && e.target.files[0];
-    sendImage(f);
+    if (f) showImagePreview(f);
     fileInput.value = '';
   });
 
@@ -392,14 +513,57 @@
     });
   })();
 
-  // 粘贴图片直接发送
+  // 粘贴/选择图片：inline 预览，配文字后按回车或发送按钮发出（微信风格）
+  function showImagePreview(file) {
+    if (!file || !file.type.startsWith('image/')) return;
+    clearImagePreview(); // 防止重复预览时泄漏旧 URL
+    pendingImageFile = file;
+    pendingImageUrl = URL.createObjectURL(file);
+    imagePreviewThumb.src = pendingImageUrl;
+    imagePreviewArea.classList.remove('hidden');
+    textInput.focus();
+  }
+
+  function clearImagePreview() {
+    imagePreviewArea.classList.add('hidden');
+    imagePreviewThumb.removeAttribute('src');
+    closeLightbox();
+    if (pendingImageUrl) { URL.revokeObjectURL(pendingImageUrl); pendingImageUrl = null; }
+    pendingImageFile = null;
+  }
+
+  // 缩略图点击放大灯箱
+  function openLightbox() {
+    if (!pendingImageUrl) return;
+    imageLightboxImg.src = pendingImageUrl;
+    imageLightbox.classList.remove('hidden');
+  }
+  function closeLightbox() {
+    if (imageLightbox.classList.contains('hidden')) return;
+    imageLightbox.classList.add('hidden');
+    imageLightboxImg.removeAttribute('src');
+  }
+  imagePreviewThumb.addEventListener('click', openLightbox);
+  imageLightbox.addEventListener('click', closeLightbox);
+  // Esc：优先关灯箱，其次取消图片预览
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!imageLightbox.classList.contains('hidden')) {
+      closeLightbox();
+    } else if (pendingImageFile && !imagePreviewArea.classList.contains('hidden')) {
+      clearImagePreview();
+    }
+  });
+
+  // 粘贴图片：拦截并进入 inline 预览
   document.addEventListener('paste', (e) => {
     if (!currentRoom) return;
     const items = e.clipboardData && e.clipboardData.items;
     if (!items) return;
     for (const it of items) {
       if (it.type.startsWith('image/')) {
-        sendImage(it.getAsFile());
+        e.preventDefault();
+        showImagePreview(it.getAsFile());
         break;
       }
     }

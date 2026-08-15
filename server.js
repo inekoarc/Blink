@@ -54,20 +54,39 @@ function roomFile(room) {
   return path.join(MSG_DIR, `${safeRoom(room)}.json`);
 }
 
+// 内存消息缓存：作为历史消息的权威来源，避免并发落盘的竞态（竞态会导致磁盘 JSON 损坏、刷新后历史丢失）
+const messageCache = {};
+
 function loadMessages(room) {
+  if (messageCache[room]) return messageCache[room];
+  let arr = [];
   try {
-    const raw = fs.readFileSync(roomFile(room), 'utf8');
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
+    const raw = fs.readFileSync(roomFile(room), 'utf8').trim();
+    if (raw) {
+      try {
+        arr = JSON.parse(raw);
+      } catch {
+        // 尝试修复「拼接型损坏」：把多余的对象/数组边界补成合法的逗号分隔
+        const fixed = raw
+          .replace(/]\s*\[/g, ',')      // ][ 之间补逗号（数组被重复覆盖写入）
+          .replace(/}\s*{/g, '},{');    // }{ 之间补逗号（对象被直接拼接）
+        arr = JSON.parse(fixed);
+        fs.writeFileSync(roomFile(room), JSON.stringify(arr)); // 修复后写回
+      }
+    }
+  } catch { /* 损坏且无法修复时按空处理 */ }
+  if (!Array.isArray(arr)) arr = [];
+  messageCache[room] = arr;
+  return arr;
 }
 
+// 使用同步写盘，避免并发 writeFile 在文件层面交错/截断导致 JSON 损坏
 function saveMessages(room, messages) {
-  fs.writeFile(roomFile(room), JSON.stringify(messages), (err) => {
-    if (err) console.error('保存消息失败:', room, err.message);
-  });
+  try {
+    fs.writeFileSync(roomFile(room), JSON.stringify(messages));
+  } catch (e) {
+    console.error('保存消息失败:', room, e.message);
+  }
 }
 
 // ---------- 房间注册表（管理员创建 / 控制） ----------
@@ -125,6 +144,7 @@ function clearRoom(room) {
     } catch { /* ignore */ }
     try { fs.unlinkSync(f); } catch { /* ignore */ }
   }
+  delete messageCache[room];
   delete roomRegistry[room];
   saveRooms();
   if (wsRooms.has(room)) {
