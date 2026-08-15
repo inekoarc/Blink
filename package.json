@@ -10,6 +10,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "express": "^4.19.2",
     "multer": "^2.0.0",
     "ws": "^8.18.0"

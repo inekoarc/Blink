@@ -1,5 +1,8 @@
 'use strict';
 
+// 在读取环境变量前加载 .env（若存在），便于在不暴露密码到命令行的前提下配置 ADMIN_PASSWORD / PORT
+require('dotenv').config();
+
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
