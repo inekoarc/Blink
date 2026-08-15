@@ -12,6 +12,7 @@
 
   const newRoom = $('newRoom');
   const newPw = $('newPw');
+  const newNote = $('newNote');
   const createBtn = $('createBtn');
   const createErr = $('createErr');
   const refreshBtn = $('refreshBtn');
@@ -116,10 +117,11 @@
     try {
       await api('/api/admin/room/create', {
         method: 'POST',
-        body: JSON.stringify({ room, password: newPw.value || null }),
+        body: JSON.stringify({ room, password: newPw.value || null, note: newNote.value.trim() || null }),
       });
       newRoom.value = '';
       newPw.value = '';
+      newNote.value = '';
       toast('房间已创建喵~');
       loadRooms();
     } catch (e) {
@@ -149,18 +151,23 @@
       roomTable.innerHTML = '<div class="empty">还没有房间喵~，请在上方创建一个。</div>';
       return;
     }
-    let html = '<table><thead><tr><th>房间名</th><th>密码</th><th>消息</th><th>在线</th><th>创建于</th><th>操作</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>房间名</th><th>备注</th><th>密码</th><th>消息</th><th>在线</th><th>创建于</th><th>操作</th></tr></thead><tbody>';
     for (const r of rooms) {
       const pwBadge = r.hasPassword
         ? '<span class="badge lock">已设密码</span>'
         : '<span class="badge open">无密码</span>';
+      const noteCell = r.note
+        ? escapeHtml(r.note)
+        : '<span class="muted">—</span>';
       html += `<tr>
         <td>${escapeHtml(r.name)}</td>
+        <td class="note-cell" title="${escapeAttr(r.note || '')}">${noteCell}</td>
         <td>${pwBadge}</td>
         <td>${r.messageCount}</td>
         <td>${r.online}</td>
         <td>${fmtTime(r.createdAt)}</td>
         <td><div class="ops">
+          <button class="btn ghost sm" data-act="note" data-room="${escapeAttr(r.name)}" data-note="${escapeAttr(r.note || '')}">备注</button>
           <button class="btn ghost sm" data-act="pw" data-room="${escapeAttr(r.name)}">改密码</button>
           <button class="btn danger sm" data-act="clear" data-room="${escapeAttr(r.name)}">清空</button>
         </div></td>
@@ -201,6 +208,15 @@
         toast('房间已清空喵~');
         loadRooms();
       } catch (err) { toast(err.message); }
+    } else if (act === 'note') {
+      const cur = btn.getAttribute('data-note') || '';
+      const input = prompt(`设置房间「${room}」的备注喵~：\n说明这个房间是做什么用的（留空则清除备注）。`, cur);
+      if (input === null) return; // 取消
+      try {
+        await api('/api/admin/room/note', { method: 'POST', body: JSON.stringify({ room, note: input.trim() || null }) });
+        toast(input.trim() ? '备注已保存喵~' : '备注已清除喵~');
+        loadRooms();
+      } catch (err) { toast(err.message); }
     }
   });
 
@@ -211,6 +227,7 @@
   createBtn.addEventListener('click', doCreate);
   newRoom.addEventListener('keydown', (e) => { if (e.key === 'Enter') doCreate(); });
   newPw.addEventListener('keydown', (e) => { if (e.key === 'Enter') doCreate(); });
+  newNote.addEventListener('keydown', (e) => { if (e.key === 'Enter') doCreate(); });
   refreshBtn.addEventListener('click', loadRooms);
 
   // 回填记住的密码（标记此框，避免被下方兜底逻辑清空）

@@ -469,6 +469,7 @@ body.chat-open .corner-link { display: none; }
 .login-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 .form-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 .form-row input.room { flex: 1; min-width: 160px; }
+.form-row input.note { flex: 1 1 220px; min-width: 160px; }
 .hint { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.6; }
 .hint code {
   background: var(--panel-2);
@@ -487,6 +488,9 @@ td .ops { display: flex; gap: 8px; }
 .badge.lock { background: rgba(255, 126, 182, 0.16); color: var(--accent); }
 .badge.open { background: rgba(95, 211, 164, 0.15); color: var(--ok); }
 .empty { color: var(--muted); text-align: center; padding: 26px 0; font-size: 14px; }
+/* 房间备注单元格：超长省略号，hover 看完整（title 已带全文） */
+.note-cell { max-width: 220px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.muted { color: var(--muted); }
 
 .toast {
   position: fixed;

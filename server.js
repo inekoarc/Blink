@@ -102,9 +102,9 @@ function loadRooms() {
     for (const [k, v] of Object.entries(obj)) {
       if (typeof v === 'string') {
         // 兼容旧格式：纯密码字符串
-        out[k] = { password: v || null, createdAt: Date.now() };
+        out[k] = { password: v || null, createdAt: Date.now(), note: null };
       } else if (v && typeof v === 'object') {
-        out[k] = { password: (v.password || null), createdAt: v.createdAt || Date.now() };
+        out[k] = { password: (v.password || null), createdAt: v.createdAt || Date.now(), note: v.note || null };
       }
     }
     return out;
@@ -276,6 +276,7 @@ app.get('/api/admin/rooms', requireAdmin, (req, res) => {
   const list = Object.keys(roomRegistry).map((name) => ({
     name,
     hasPassword: !!roomRegistry[name].password,
+    note: roomRegistry[name].note || null,
     messageCount: loadMessages(name).length,
     online: wsRooms.has(name) ? wsRooms.get(name).size : 0,
     createdAt: roomRegistry[name].createdAt,
@@ -283,13 +284,14 @@ app.get('/api/admin/rooms', requireAdmin, (req, res) => {
   res.json({ rooms: list });
 });
 
-// 创建房间（可选密码）
+// 创建房间（可选密码 / 备注）
 app.post('/api/admin/room/create', requireAdmin, (req, res) => {
   const room = safeRoom(req.body && req.body.room);
   if (!room) return res.status(400).json({ error: '房间名无效喵~（仅允许字母/数字/_-@.）' });
   if (roomExists(room)) return res.status(400).json({ error: '房间已存在喵~' });
   const pw = req.body && req.body.password ? String(req.body.password) : null;
-  roomRegistry[room] = { password: pw, createdAt: Date.now() };
+  const note = req.body && req.body.note ? String(req.body.note).slice(0, 200).trim() : null;
+  roomRegistry[room] = { password: pw, createdAt: Date.now(), note };
   saveRooms();
   res.json({ ok: true });
 });
@@ -302,6 +304,16 @@ app.post('/api/admin/room/password', requireAdmin, (req, res) => {
   roomRegistry[room].password = pw;
   saveRooms();
   res.json({ ok: true, hasPassword: !!pw });
+});
+
+// 设置房间备注（说明房间用途；note 为空则清除备注）
+app.post('/api/admin/room/note', requireAdmin, (req, res) => {
+  const room = safeRoom(req.body && req.body.room);
+  if (!roomExists(room)) return res.status(404).json({ error: '房间不存在喵~' });
+  const note = req.body && req.body.note ? String(req.body.note).slice(0, 200).trim() : null;
+  roomRegistry[room].note = note;
+  saveRooms();
+  res.json({ ok: true, note });
 });
 
 // 清空房间（删除一切存在痕迹）
