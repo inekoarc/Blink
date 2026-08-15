@@ -12,7 +12,7 @@ const { WebSocketServer } = require('ws');
 const PORT = process.env.PORT || 7777;
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 50);
 const MAX_HISTORY = Number(process.env.MAX_HISTORY || 500);
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || require('crypto').randomBytes(12).toString('hex');
 const ADMIN_TOKEN_TTL = Number(process.env.ADMIN_TOKEN_TTL || 1000 * 60 * 60 * 24); // 默认 24h
 
 const DATA_DIR = path.join(__dirname, 'data');
@@ -457,7 +457,10 @@ function appendMessage(room, message) {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Browser Relay 运行中: http://localhost:${PORT}`);
   console.log(`管理员页面: http://localhost:${PORT}/admin.html`);
-  if (ADMIN_PASSWORD === 'admin123') {
-    console.warn('[安全警告] 正在使用默认管理员密码 "admin123"，请通过环境变量 ADMIN_PASSWORD 修改后再部署到公网。');
+  if (!process.env.ADMIN_PASSWORD) {
+    console.warn(`[安全提示] 未设置 ADMIN_PASSWORD 环境变量，已生成随机管理员密码：${ADMIN_PASSWORD}`);
+    console.warn('[安全提示] 公网部署前请务必通过环境变量 ADMIN_PASSWORD 设置强密码。');
+  } else if (ADMIN_PASSWORD === 'admin123') {
+    console.warn('[安全警告] 正在使用默认管理员密码 "admin123"，公网部署前请务必修改。');
   }
 });
