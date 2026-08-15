@@ -9,7 +9,7 @@ const express = require('express');
 const multer = require('multer');
 const { WebSocketServer } = require('ws');
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 7777;
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 50);
 const MAX_HISTORY = Number(process.env.MAX_HISTORY || 500);
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
