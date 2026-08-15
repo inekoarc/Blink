@@ -1,5 +1,5 @@
 {
-  "name": "browser-relay",
+  "name": "blink",
   "version": "1.0.0",
   "description": "纯浏览器实时通信服务：多设备跨端互发文字与图片，无需安装客户端",
   "main": "server.js",

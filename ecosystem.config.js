@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: 'browser-relay',
+      name: 'blink',
       script: 'server.js',
       instances: 1,
       autorestart: true,

@@ -458,7 +458,7 @@ function appendMessage(room, message) {
 }
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Browser Relay 运行中: http://localhost:${PORT}`);
+  console.log(`Blink 运行中: http://localhost:${PORT}`);
   console.log(`管理员页面: http://localhost:${PORT}/admin.html`);
   if (!process.env.ADMIN_PASSWORD) {
     console.warn(`[安全提示] 未设置 ADMIN_PASSWORD 环境变量，已生成随机管理员密码：${ADMIN_PASSWORD}`);
