@@ -47,13 +47,13 @@ class HostIdAllocator {
     this.used = new Set(); // 当前已被占用的名字
   }
 
-  /** 分配一个未占用的 ID；池耗尽时返回「旅人N」式兜底名（仍保证本轮唯一）。 */
+  /** 从未被占用的名字中随机挑一个分配给新主机（避免单人测试时永远拿到池首的名字）；池耗尽时返回「旅人N」式兜底名（仍保证本轮唯一）。 */
   assign() {
-    for (const name of this.pool) {
-      if (!this.used.has(name)) {
-        this.used.add(name);
-        return name;
-      }
+    const free = this.pool.filter((n) => !this.used.has(n));
+    if (free.length) {
+      const name = free[Math.floor(Math.random() * free.length)];
+      this.used.add(name);
+      return name;
     }
     let i = 1;
     while (this.used.has(`旅人${i}`)) i++;
