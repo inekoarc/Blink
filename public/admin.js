@@ -13,6 +13,7 @@
   const newRoom = $('newRoom');
   const newPw = $('newPw');
   const newNote = $('newNote');
+  const newDestroy = $('newDestroy');
   const createBtn = $('createBtn');
   const createErr = $('createErr');
   const refreshBtn = $('refreshBtn');
@@ -115,13 +116,20 @@
     const room = newRoom.value.trim();
     if (!room) { createErr.textContent = '请输入房间名'; return; }
     try {
+      const destroyInSeconds = Number(newDestroy.getAttribute('data-value')) || 0;
       await api('/api/admin/room/create', {
         method: 'POST',
-        body: JSON.stringify({ room, password: newPw.value || null, note: newNote.value.trim() || null }),
+        body: JSON.stringify({
+          room,
+          password: newPw.value || null,
+          note: newNote.value.trim() || null,
+          destroyInSeconds: destroyInSeconds || undefined,
+        }),
       });
       newRoom.value = '';
       newPw.value = '';
       newNote.value = '';
+      newDestroy.value = '0';
       toast('房间已创建喵~');
       loadRooms();
     } catch (e) {
@@ -151,13 +159,16 @@
       roomTable.innerHTML = '<div class="empty">还没有房间喵~，请在上方创建一个。</div>';
       return;
     }
-    let html = '<table><thead><tr><th>房间名</th><th>备注</th><th>密码</th><th>消息</th><th>在线</th><th>创建于</th><th>操作</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>房间名</th><th>备注</th><th>密码</th><th>消息</th><th>在线</th><th>创建于</th><th>自动销毁</th><th>操作</th></tr></thead><tbody>';
     for (const r of rooms) {
       const pwBadge = r.hasPassword
         ? '<span class="badge lock">已设密码</span>'
         : '<span class="badge open">无密码</span>';
       const noteCell = r.note
         ? escapeHtml(r.note)
+        : '<span class="muted">—</span>';
+      const destroyCell = r.destroyAt
+        ? `<span class="badge warn" data-destroy="${r.destroyAt}">${fmtRemaining(r.destroyAt)}</span>`
         : '<span class="muted">—</span>';
       html += `<tr>
         <td>${escapeHtml(r.name)}</td>
@@ -166,15 +177,31 @@
         <td>${r.messageCount}</td>
         <td>${r.online}</td>
         <td>${fmtTime(r.createdAt)}</td>
+        <td>${destroyCell}</td>
         <td><div class="ops">
           <button class="btn ghost sm" data-act="note" data-room="${escapeAttr(r.name)}" data-note="${escapeAttr(r.note || '')}">备注</button>
           <button class="btn ghost sm" data-act="pw" data-room="${escapeAttr(r.name)}">改密码</button>
+          <button class="btn ghost sm" data-act="destroy-at" data-room="${escapeAttr(r.name)}" data-destroy="${r.destroyAt || ''}">定时销毁</button>
           <button class="btn danger sm" data-act="clear" data-room="${escapeAttr(r.name)}">清空</button>
+          <button class="btn danger sm" data-act="destroy" data-room="${escapeAttr(r.name)}">退房</button>
         </div></td>
       </tr>`;
     }
     html += '</tbody></table>';
     roomTable.innerHTML = html;
+  }
+
+  // 将未来的销毁时间戳格式化为剩余时间（用于列表展示）
+  function fmtRemaining(ts) {
+    let sec = Math.floor((ts - Date.now()) / 1000);
+    if (sec <= 0) return '即将销毁';
+    const d = Math.floor(sec / 86400); sec -= d * 86400;
+    const h = Math.floor(sec / 3600); sec -= h * 3600;
+    const m = Math.floor(sec / 60); sec -= m * 60;
+    if (d > 0) return `${d}天${h}小时后`;
+    if (h > 0) return `${h}小时${m}分后`;
+    if (m > 0) return `${m}分${sec}秒后`;
+    return `${sec}秒后`;
   }
 
   function escapeHtml(s) {
@@ -202,10 +229,10 @@
         loadRooms();
       } catch (err) { toast(err.message); }
     } else if (act === 'clear') {
-      if (!confirm(`确定清空房间「${room}」吗喵~？\n将删除该房间的全部消息、图片与密码，且房间将不再存在（游客无法再加入）。`)) return;
+      if (!confirm(`确定清空房间「${room}」吗喵~？\n将删除该房间的全部消息、图片与文件，但房间本身会保留（密码、备注、在线连接不受影响）。`)) return;
       try {
         await api('/api/admin/room/clear', { method: 'POST', body: JSON.stringify({ room }) });
-        toast('房间已清空喵~');
+        toast('房间消息与文件已清空喵~');
         loadRooms();
       } catch (err) { toast(err.message); }
     } else if (act === 'note') {
@@ -215,6 +242,31 @@
       try {
         await api('/api/admin/room/note', { method: 'POST', body: JSON.stringify({ room, note: input.trim() || null }) });
         toast(input.trim() ? '备注已保存喵~' : '备注已清除喵~');
+        loadRooms();
+      } catch (err) { toast(err.message); }
+    } else if (act === 'destroy-at') {
+      const cur = btn.getAttribute('data-destroy') || '';
+      const curStr = cur ? new Date(Number(cur)).toLocaleString('zh-CN') : '未设置';
+      const input = prompt(`设置房间「${room}」的自动销毁时间喵~：\n当前：${curStr}\n\n输入格式（二选一）：\n  · 相对秒数，例如 3600 表示 1 小时后销毁；\n  · 留空或输入 0 表示取消自动销毁。`, cur ? '0' : '');
+      if (input === null) return; // 取消
+      const trimmed = input.trim();
+      try {
+        if (trimmed === '' || trimmed === '0') {
+          await api('/api/admin/room/destroy-at', { method: 'POST', body: JSON.stringify({ room, destroyInSeconds: 0 }) });
+          toast('已取消自动销毁喵~');
+        } else {
+          const secs = Number(trimmed);
+          if (!Number.isFinite(secs) || secs <= 0) throw new Error('请输入有效的秒数喵~');
+          await api('/api/admin/room/destroy-at', { method: 'POST', body: JSON.stringify({ room, destroyInSeconds: secs }) });
+          toast('已设置自动销毁时间喵~');
+        }
+        loadRooms();
+      } catch (err) { toast(err.message); }
+    } else if (act === 'destroy') {
+      if (!confirm(`确定要「退房」房间「${room}」吗喵~？\n⚠️ 该房间将被立即销毁，其全部消息、图片、文件以及房间记录都会被永久删除，且无法恢复！`)) return;
+      try {
+        await api('/api/admin/room/destroy', { method: 'POST', body: JSON.stringify({ room }) });
+        toast('房间已退房销毁喵~');
         loadRooms();
       } catch (err) { toast(err.message); }
     }
@@ -233,6 +285,63 @@
   // 回填记住的密码（标记此框，避免被下方兜底逻辑清空）
   const savedPw = localStorage.getItem('adminRememberPw');
   if (savedPw) { adminPw.value = savedPw; adminPw.dataset.remember = '1'; rememberPw.checked = true; }
+
+  // 自定义下拉组件（替代原生 select，避免浏览器默认白框）
+  function wireCustomSelect(root) {
+    const trigger = root.querySelector('.custom-select-trigger');
+    const dropdown = root.querySelector('.custom-select-dropdown');
+    const label = root.querySelector('.custom-select-label');
+    const options = Array.from(dropdown.querySelectorAll('li'));
+    function setValue(value, silent) {
+      const option = options.find((li) => li.getAttribute('data-value') === String(value));
+      if (!option) return;
+      root.setAttribute('data-value', value);
+      label.textContent = option.textContent;
+      options.forEach((li) => li.classList.toggle('active', li === option));
+    }
+    function open() {
+      root.classList.add('open');
+      trigger.setAttribute('aria-expanded', 'true');
+    }
+    function close() {
+      root.classList.remove('open');
+      trigger.setAttribute('aria-expanded', 'false');
+    }
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (root.classList.contains('open')) close();
+      else open();
+    });
+    dropdown.addEventListener('click', (e) => {
+      const li = e.target.closest('li');
+      if (!li) return;
+      setValue(li.getAttribute('data-value'));
+      close();
+    });
+    document.addEventListener('click', (e) => {
+      if (!root.contains(e.target)) close();
+    });
+    trigger.addEventListener('keydown', (e) => {
+      const active = options.find((li) => li.classList.contains('active'));
+      let idx = active ? options.indexOf(active) : 0;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        idx = Math.min(idx + 1, options.length - 1);
+        setValue(options[idx].getAttribute('data-value'));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        idx = Math.max(idx - 1, 0);
+        setValue(options[idx].getAttribute('data-value'));
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (root.classList.contains('open')) close(); else open();
+      } else if (e.key === 'Escape') {
+        close();
+      }
+    });
+    setValue(root.getAttribute('data-value') || '0', true);
+  }
+  wireCustomSelect(newDestroy);
 
   // 密码可见化
   function wirePwToggle(inputEl, btnEl) {

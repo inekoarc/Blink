@@ -32,7 +32,10 @@
   <!-- 聊天主界面 -->
   <div id="chat" class="chat-screen hidden">
     <header class="topbar">
-      <div class="room-info">
+      <div class="topbar-left">
+        <span id="identity" class="identity"></span>
+      </div>
+      <div class="topbar-center">
         <span id="roomLabel" class="room-name"></span>
         <span id="presence" class="presence"></span>
       </div>
@@ -68,6 +71,7 @@
     </footer>
   </div>
 
+  <script src="/avatarMap.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

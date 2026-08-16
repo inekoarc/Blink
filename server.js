@@ -12,6 +12,10 @@ const express = require('express');
 const multer = require('multer');
 const { WebSocketServer } = require('ws');
 
+// 主机身份 ID 池与分配器（二次元角色名，接入时自动分配、断开时回收）
+const { CHARACTER_POOL, HostIdAllocator } = require('./hostids');
+const hostAllocator = new HostIdAllocator(CHARACTER_POOL);
+
 const PORT = process.env.PORT || 7777;
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 50);
 const MAX_HISTORY = Number(process.env.MAX_HISTORY || 500);
@@ -49,8 +53,10 @@ function ensureDirs() {
 ensureDirs();
 
 function safeRoom(room) {
-  // 仅保留安全字符，防止路径穿越
-  return String(room || '').replace(/[^a-zA-Z0-9_\-@.]/g, '').slice(0, 64);
+  // 仅保留安全字符与中文（CJK），防止路径穿越
+  let s = String(room || '').replace(/[^\u4e00-\u9fa5a-zA-Z0-9_\-@.]/g, '').slice(0, 64);
+  if (/^\.+$/.test(s)) s = ''; // 禁止纯点号文件名（如 . 或 ..）
+  return s;
 }
 
 function roomFile(room) {
@@ -104,7 +110,12 @@ function loadRooms() {
         // 兼容旧格式：纯密码字符串
         out[k] = { password: v || null, createdAt: Date.now(), note: null };
       } else if (v && typeof v === 'object') {
-        out[k] = { password: (v.password || null), createdAt: v.createdAt || Date.now(), note: v.note || null };
+        out[k] = {
+          password: (v.password || null),
+          createdAt: v.createdAt || Date.now(),
+          note: v.note || null,
+          destroyAt: (typeof v.destroyAt === 'number' && v.destroyAt > 0) ? v.destroyAt : null,
+        };
       }
     }
     return out;
@@ -130,7 +141,8 @@ function roomPassword(room) {
 }
 
 // 彻底清空一个房间：删除消息文件、关联上传文件、注册表记录，并踢出在线用户
-function clearRoom(room) {
+// 仅清理房间内的消息文件与上传文件（不碰注册表、不踢人、不动连接）
+function purgeRoomData(room) {
   const f = roomFile(room);
   if (fs.existsSync(f)) {
     try {
@@ -148,15 +160,54 @@ function clearRoom(room) {
     try { fs.unlinkSync(f); } catch { /* ignore */ }
   }
   delete messageCache[room];
+}
+
+// 清空房间：删除全部消息与文件，但保留房间本身（注册表/密码/备注/在线连接均保留）
+function clearRoom(room, reason) {
+  reason = reason || '房间消息已被管理员清空';
+  purgeRoomData(room);
+  // 通知在线用户同步清空本地历史（房间与连接保留）
+  if (wsRooms.has(room)) {
+    for (const client of [...wsRooms.get(room)]) {
+      try { client.send(JSON.stringify({ type: 'cleared', msg: reason })); } catch { /* ignore */ }
+    }
+  }
+}
+
+// 退房 / 自动销毁：彻底清理房间一切痕迹（消息、文件、注册表、在线连接）
+function destroyRoom(room, reason) {
+  reason = reason || '房间已自动销毁';
+  purgeRoomData(room);
   delete roomRegistry[room];
   saveRooms();
   if (wsRooms.has(room)) {
     for (const client of [...wsRooms.get(room)]) {
-      try { client.send(JSON.stringify({ type: 'error', msg: '房间已被管理员清空' })); } catch { /* ignore */ }
+      try { client.send(JSON.stringify({ type: 'error', msg: reason })); } catch { /* ignore */ }
       try { client.close(); } catch { /* ignore */ }
     }
     wsRooms.delete(room);
   }
+}
+
+// 自动销毁调度器：周期性扫描房间注册表，对到达销毁时间的房间执行彻底清理。
+// 进程启动时也会立即清理一次（覆盖服务重启期间"错过"的到期房间）。
+let destroyTimer = null;
+function scheduleRoomDestroy() {
+  function tick() {
+    const now = Date.now();
+    const due = [];
+    for (const [name, info] of Object.entries(roomRegistry)) {
+      if (info.destroyAt && info.destroyAt <= now) due.push(name);
+    }
+    for (const name of due) {
+      console.log(`[自动销毁] 房间「${name}」到达设定的销毁时间，正在清理喵~`);
+      destroyRoom(name, '房间已到自动销毁时间');
+    }
+  }
+  // 启动即清理一次，避免服务器停机期间到期的房间残留
+  tick();
+  if (destroyTimer) clearInterval(destroyTimer);
+  destroyTimer = setInterval(tick, 30 * 1000); // 每 30 秒扫描一次
 }
 
 // ---------- 管理员会话（token） ----------
@@ -189,6 +240,19 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // 上传的文件（图片、文档等任意类型）静态服务
 app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
+
+// 列出 public/avatars 下已有的真实头像文件名（前端据此决定使用本地头像还是回退）
+app.get('/api/avatars', (req, res) => {
+  const dir = path.join(__dirname, 'public', 'avatars');
+  try {
+    const names = fs.readdirSync(dir)
+      .filter(f => f.toLowerCase().endsWith('.png'))
+      .map(f => f.slice(0, -4));
+    res.json({ names });
+  } catch {
+    res.json({ names: [] });
+  }
+});
 
 // 文件上传接口（返回可访问 URL，由 WS 广播该 URL 实现跨设备传输）
 const storage = multer.diskStorage({
@@ -271,7 +335,7 @@ app.get('/api/admin/me', (req, res) => {
   res.json({ ok: validAdminToken(authTokenFromReq(req)) });
 });
 
-// 房间列表（含在线人数、消息数）
+// 房间列表（含在线人数、消息数、自动销毁时间）
 app.get('/api/admin/rooms', requireAdmin, (req, res) => {
   const list = Object.keys(roomRegistry).map((name) => ({
     name,
@@ -280,21 +344,40 @@ app.get('/api/admin/rooms', requireAdmin, (req, res) => {
     messageCount: loadMessages(name).length,
     online: wsRooms.has(name) ? wsRooms.get(name).size : 0,
     createdAt: roomRegistry[name].createdAt,
+    destroyAt: roomRegistry[name].destroyAt || null,
   }));
   res.json({ rooms: list });
 });
 
-// 创建房间（可选密码 / 备注）
+// 创建房间（可选密码 / 备注 / 自动销毁时间）
 app.post('/api/admin/room/create', requireAdmin, (req, res) => {
   const room = safeRoom(req.body && req.body.room);
-  if (!room) return res.status(400).json({ error: '房间名无效喵~（仅允许字母/数字/_-@.）' });
+  if (!room) return res.status(400).json({ error: '房间名无效喵~（仅允许中英文/数字/_-@.，且不能为空或纯点号）' });
   if (roomExists(room)) return res.status(400).json({ error: '房间已存在喵~' });
   const pw = req.body && req.body.password ? String(req.body.password) : null;
   const note = req.body && req.body.note ? String(req.body.note).slice(0, 200).trim() : null;
-  roomRegistry[room] = { password: pw, createdAt: Date.now(), note };
+  const destroyAt = parseDestroyAt(req.body);
+  if (req.body && (req.body.destroyAt !== undefined || req.body.destroyInSeconds !== undefined) && destroyAt === null) {
+    return res.status(400).json({ error: '自动销毁时间无效喵~（需为未来时间）' });
+  }
+  roomRegistry[room] = { password: pw, createdAt: Date.now(), note, destroyAt };
   saveRooms();
-  res.json({ ok: true });
+  res.json({ ok: true, destroyAt });
 });
+
+// 解析自动销毁时间：接受绝对时间戳（destroyAt，epoch ms）或相对秒数（destroyInSeconds），
+// 均需为未来时间；非法或已过期则返回 null。
+function parseDestroyAt(body) {
+  if (!body) return null;
+  let ts = null;
+  if (typeof body.destroyAt === 'number' && body.destroyAt > 0) {
+    ts = body.destroyAt;
+  } else if (typeof body.destroyInSeconds === 'number' && body.destroyInSeconds > 0) {
+    ts = Date.now() + body.destroyInSeconds * 1000;
+  }
+  if (!ts || ts <= Date.now()) return null;
+  return ts;
+}
 
 // 修改 / 移除房间密码（password 为空则移除密码）
 app.post('/api/admin/room/password', requireAdmin, (req, res) => {
@@ -314,6 +397,29 @@ app.post('/api/admin/room/note', requireAdmin, (req, res) => {
   roomRegistry[room].note = note;
   saveRooms();
   res.json({ ok: true, note });
+});
+
+// 设置 / 取消房间自动销毁时间（destroyAt 为空或 0 则取消自动销毁）
+app.post('/api/admin/room/destroy-at', requireAdmin, (req, res) => {
+  const room = safeRoom(req.body && req.body.room);
+  if (!roomExists(room)) return res.status(404).json({ error: '房间不存在喵~' });
+  const destroyAt = parseDestroyAt(req.body);
+  // 显式要求取消（传入 destroyAt:0 / null / '' 等）时把自动销毁关闭
+  const wantsCancel = req.body && (req.body.destroyAt === null || req.body.destroyAt === 0 || req.body.destroyAt === '' || req.body.destroyInSeconds === 0);
+  if (!destroyAt && !wantsCancel) {
+    return res.status(400).json({ error: '自动销毁时间无效喵~（需为未来时间，或显式取消）' });
+  }
+  roomRegistry[room].destroyAt = wantsCancel ? null : destroyAt;
+  saveRooms();
+  res.json({ ok: true, destroyAt: roomRegistry[room].destroyAt });
+});
+
+// 退房：立即销毁房间并清理全部数据（等价于到点的自动销毁）
+app.post('/api/admin/room/destroy', requireAdmin, (req, res) => {
+  const room = safeRoom(req.body && req.body.room);
+  if (!roomExists(room)) return res.status(404).json({ error: '房间不存在喵~' });
+  destroyRoom(room, '房间已被管理员退房销毁');
+  res.json({ ok: true });
 });
 
 // 清空房间（删除一切存在痕迹）
@@ -355,6 +461,9 @@ function sendPresence(room) {
 wss.on('connection', (ws) => {
   ws.room = null;
   ws.authed = false;
+  // 为新接入的主机分配唯一身份 ID（二次元角色名），并在连接建立后下发给客户端
+  ws.hostId = hostAllocator.assign();
+  try { ws.send(JSON.stringify({ type: 'host', id: ws.hostId })); } catch { /* ignore */ }
 
   ws.on('message', (raw) => {
     let msg;
@@ -408,6 +517,7 @@ wss.on('connection', (ws) => {
         id: crypto.randomUUID(),
         type: 'text',
         text,
+        sender: ws.hostId, // 发送方身份 ID，接收方据此区分消息来源
         ts: Date.now(),
       };
       appendMessage(ws.room, message);
@@ -426,6 +536,7 @@ wss.on('connection', (ws) => {
         type: 'image',
         url,
         name: String(msg.name || '').slice(0, 120),
+        sender: ws.hostId,
         ts: Date.now(),
       };
       appendMessage(ws.room, message);
@@ -445,6 +556,7 @@ wss.on('connection', (ws) => {
         url,
         name: String(msg.name || '文件').slice(0, 200),
         size: Number(msg.size || 0),
+        sender: ws.hostId,
         ts: Date.now(),
       };
       appendMessage(ws.room, message);
@@ -454,6 +566,8 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    // 主机断开：释放其占用的身份 ID，供后续复用
+    if (ws.hostId) { hostAllocator.release(ws.hostId); ws.hostId = null; }
     if (ws.room && wsRooms.has(ws.room)) {
       wsRooms.get(ws.room).delete(ws);
       sendPresence(ws.room);
@@ -472,6 +586,7 @@ function appendMessage(room, message) {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Blink 运行中: http://localhost:${PORT}`);
   console.log(`管理员页面: http://localhost:${PORT}/admin.html`);
+  scheduleRoomDestroy(); // 启动自动销毁扫描（含启动即清理到期房间）
   if (!process.env.ADMIN_PASSWORD) {
     console.warn(`[安全提示] 未设置 ADMIN_PASSWORD 环境变量，已生成随机管理员密码：${ADMIN_PASSWORD}`);
     console.warn('[安全提示] 公网部署前请务必通过环境变量 ADMIN_PASSWORD 设置强密码。');

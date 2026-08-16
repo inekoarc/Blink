@@ -37,12 +37,26 @@
       <div class="card">
         <h2>🌸 创建房间</h2>
         <div class="form-row">
-          <input class="room" id="newRoom" placeholder="房间名（字母/数字/_-@.）喵~" autocomplete="off" />
+          <input class="room" id="newRoom" placeholder="房间名（支持中英文/数字/_-@.）喵~" autocomplete="off" />
           <span class="pw-wrap">
             <input class="pw secure" id="newPw" type="text" placeholder="密码（可选，留空则无需密码）喵~" autocomplete="new-password" />
             <button type="button" class="pw-toggle" id="newPwToggle" aria-label="显示或隐藏密码" title="显示/隐藏密码"></button>
           </span>
           <input class="note" id="newNote" placeholder="备注（可选，说明用途）喵~" autocomplete="off" />
+          <div class="custom-select destroy" id="newDestroy" data-value="0">
+            <button type="button" class="custom-select-trigger" aria-haspopup="listbox" aria-expanded="false">
+              <span class="custom-select-label">不自动销毁</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <ul class="custom-select-dropdown" role="listbox">
+              <li data-value="0" class="active" role="option">不自动销毁</li>
+              <li data-value="3600" role="option">1 小时后销毁</li>
+              <li data-value="21600" role="option">6 小时后销毁</li>
+              <li data-value="86400" role="option">1 天后销毁</li>
+              <li data-value="259200" role="option">3 天后销毁</li>
+              <li data-value="604800" role="option">7 天后销毁</li>
+            </ul>
+          </div>
           <button class="btn" id="createBtn">创建喵~</button>
         </div>
         <p class="err" id="createErr"></p>

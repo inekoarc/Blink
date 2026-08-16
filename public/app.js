@@ -12,6 +12,7 @@
   const joinErr = $('joinErr');
   const roomLabel = $('roomLabel');
   const presenceEl = $('presence');
+  const identityEl = $('identity');
   const messagesEl = $('messages');
   const statusEl = $('status');
   const textInput = $('textInput');
@@ -39,6 +40,14 @@
   let reconnectTimer = null;
   let retry = 0;
   let joined = false;
+  let myHostId = null; // 本机被分配的身份 ID（二次元角色名）
+  // 本地真实头像清单（public/avatars 下已有的文件名，去掉 .png），由 /api/avatars 提供
+  const avatarNames = new Set();
+  try {
+    fetch('/api/avatars').then(r => r.json()).then(d => {
+      if (d && Array.isArray(d.names)) d.names.forEach(n => avatarNames.add(n));
+    }).catch(() => {});
+  } catch (_) {}
 
   // 从 URL 预填房间号
   const params = new URLSearchParams(location.search);
@@ -159,14 +168,77 @@
     statusEl.className = 'status-bar' + (kind ? ' ' + kind : '');
   }
 
-  // ---------- 渲染消息 ----------
+  // 显示本机被分配的身份 ID
+  function updateIdentity() {
+    identityEl.textContent = myHostId ? ('你的身份：' + myHostId) : '';
+  }
+
+  // 根据 sender 名确定头像：
+  //   1) AVATAR_OVERRIDE（avatarMap.js 中的手动 URL，可选）；
+  //   2) 本地真实图片 public/avatars/<角色名>.png（命中即显示，缺图回退）；
+  //   3) 首字 + HSL 主题色生成的 SVG 头像。
+  function avatarFor(name) {
+    const s = String(name || '?');
+    if (typeof AVATAR_OVERRIDE !== 'undefined' && AVATAR_OVERRIDE[s]) {
+      return AVATAR_OVERRIDE[s];
+    }
+    if (avatarNames.has(s)) {
+      return '/avatars/' + encodeURIComponent(s) + '.png';
+    }
+    const chars = Array.from(s);
+    const char = chars.find(c => /\S/.test(c)) || '?';
+    let h = 0;
+    for (const ch of s) h = ((h << 5) - h) + ch.charCodeAt(0) | 0;
+    const hue = Math.abs(h) % 360;
+    const bg = `hsl(${hue}, 70%, 45%)`;
+    const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" rx="50" fill="${esc(bg)}"/><text x="50" y="68" font-size="48" text-anchor="middle" fill="#fff" font-family="system-ui, -apple-system, sans-serif" font-weight="600">${esc(char)}</text></svg>`;
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  }
+
+  // ---------- 渲染消息（QQ 风格：头像 + 名字 + 气泡） ----------
   function renderMessage(m) {
     const wrap = document.createElement('div');
     wrap.className = 'msg';
-    const time = document.createElement('div');
-    time.className = 'msg-time';
-    time.textContent = fmtTime(m.ts);
-    wrap.appendChild(time);
+    // 根据发送方 ID 区分自己与他人的消息
+    const isSelf = !!(myHostId && m.sender && m.sender === myHostId);
+    if (isSelf) wrap.classList.add('self');
+
+    const senderName = m.sender || '匿名';
+
+    // 头像
+    const avatar = document.createElement('img');
+    avatar.className = 'msg-avatar';
+    avatar.src = avatarFor(senderName);
+    avatar.alt = senderName;
+    // 若本地真实头像缺失（如清单尚未加载完），回退到首字生成头像，避免裂图
+    avatar.onerror = () => {
+      if (!avatar.src.startsWith('data:')) {
+        avatar.onerror = null;
+        avatar.src = (() => {
+          const s = String(senderName || '?');
+          const chars = Array.from(s);
+          const char = chars.find(c => /\S/.test(c)) || '?';
+          let h = 0;
+          for (const ch of s) h = ((h << 5) - h) + ch.charCodeAt(0) | 0;
+          const hue = Math.abs(h) % 360;
+          const bg = `hsl(${hue}, 70%, 45%)`;
+          const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
+          const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" rx="50" fill="${esc(bg)}"/><text x="50" y="68" font-size="48" text-anchor="middle" fill="#fff" font-family="system-ui, -apple-system, sans-serif" font-weight="600">${esc(char)}</text></svg>`;
+          return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+        })();
+      }
+    };
+    wrap.appendChild(avatar);
+
+    // 内容区：名字 + 气泡 + 时间
+    const body = document.createElement('div');
+    body.className = 'msg-body';
+
+    const sender = document.createElement('div');
+    sender.className = 'msg-sender';
+    sender.textContent = senderName;
+    body.appendChild(sender);
 
     if (m.type === 'image') {
       const a = document.createElement('a');
@@ -180,12 +252,12 @@
       img.onload = scrollToBottom;
       img.onerror = scrollToBottom;
       a.appendChild(img);
-      wrap.appendChild(a);
+      body.appendChild(a);
       if (m.name) {
         const cap = document.createElement('div');
         cap.className = 'msg-cap';
         cap.textContent = m.name;
-        wrap.appendChild(cap);
+        body.appendChild(cap);
       }
     } else if (m.type === 'file') {
       if (isImageExt(m.name)) {
@@ -201,7 +273,7 @@
         img.onload = scrollToBottom;
         img.onerror = scrollToBottom;
         a.appendChild(img);
-        wrap.appendChild(a);
+        body.appendChild(a);
 
         const cap = document.createElement('div');
         cap.className = 'msg-file-cap';
@@ -221,7 +293,7 @@
         cap.appendChild(nm);
         cap.appendChild(sz);
         cap.appendChild(dl);
-        wrap.appendChild(cap);
+        body.appendChild(cap);
       } else {
         // 普通文件：图标 + 文件名/大小 + 下载卡片
         const a = document.createElement('a');
@@ -253,14 +325,21 @@
         a.appendChild(icon);
         a.appendChild(meta);
         a.appendChild(dl);
-        wrap.appendChild(a);
+        body.appendChild(a);
       }
     } else {
       const txt = document.createElement('div');
       txt.className = 'msg-text';
       txt.textContent = m.text; // textContent 天然防 XSS
-      wrap.appendChild(txt);
+      body.appendChild(txt);
     }
+
+    const time = document.createElement('div');
+    time.className = 'msg-time';
+    time.textContent = fmtTime(m.ts);
+    body.appendChild(time);
+
+    wrap.appendChild(body);
     messagesEl.appendChild(wrap);
     scrollToBottom();
   }
@@ -295,6 +374,14 @@
         renderMessage(msg.message);
       } else if (msg.type === 'presence') {
         presenceEl.textContent = `在线 ${msg.count} 人`;
+      } else if (msg.type === 'cleared') {
+        // 房间消息被管理员清空：同步清空本地显示（房间与连接保留）
+        messagesEl.innerHTML = '';
+        setStatus(msg.msg || '房间消息已被清空', 'info');
+      } else if (msg.type === 'host') {
+        // 服务端为本机分配的身份 ID
+        myHostId = msg.id;
+        updateIdentity();
       } else if (msg.type === 'error') {
         // 密码错误等：退回登录页
         if (!joined) {
