@@ -8,33 +8,6 @@
  *  - EMOJI_MAP 提供 表情名 -> 本地文件名 的查找表，用于渲染与匹配。
  */
 window.TIEBA_EMOJIS = {
-  // 常用：把贴吧最经典的表情放在第一屏，省去翻找
-  '常用': [
-    { name: '滑稽', file: 'i_f25.png' },
-    { name: '汗', file: 'i_f08.png' },
-    { name: '黑线', file: 'i_f10.png' },
-    { name: '阴险', file: 'i_f16.png' },
-    { name: '委屈', file: 'i_f19.png' },
-    { name: '狂汗', file: 'i_f27.png' },
-    { name: '泪', file: 'i_f09.png' },
-    { name: '怒', file: 'i_f06.png' },
-    { name: '开心', file: 'i_f07.png' },
-    { name: '鄙视', file: 'i_f11.png' },
-    { name: '咦', file: 'i_f18.png' },
-    { name: '笑眼', file: 'i_f22.png' },
-    { name: '冷', file: 'i_f23.png' },
-    { name: '太开心', file: 'i_f24.png' },
-    { name: '勉强', file: 'i_f26.png' },
-    { name: '乖', file: 'i_f28.png' },
-    { name: '惊哭', file: 'i_f30.png' },
-    { name: '爱心', file: 'i_f34.png' },
-    { name: '心碎', file: 'i_f35.png' },
-    { name: '玫瑰', file: 'i_f36.png' },
-    { name: '礼物', file: 'i_f37.png' },
-    { name: '胜利', file: 'i_f47.png' },
-    { name: '大拇指', file: 'i_f48.png' },
-    { name: 'OK', file: 'i_f50.png' },
-  ],
   '表情': [
     { name: '呵呵', file: 'i_f01.png' },
     { name: '哈哈', file: 'i_f02.png' },
