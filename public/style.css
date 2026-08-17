@@ -609,10 +609,20 @@ input::placeholder { color: var(--muted); opacity: 0.85; }
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
   gap: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding: 4px 2px 2px;
-  max-height: 232px;
+  /* 让滚动条在深色面板上更明显 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) transparent;
 }
+.emoji-grid::-webkit-scrollbar { width: 6px; }
+.emoji-grid::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 3px;
+}
+.emoji-grid::-webkit-scrollbar-track { background: transparent; }
 .emoji-item {
   border: 1px solid transparent;
   background: transparent;
