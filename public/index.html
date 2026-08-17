@@ -62,6 +62,7 @@
     </div>
 
     <footer class="composer">
+      <button id="emojiBtn" class="btn ghost icon" type="button" title="表情" aria-label="表情">😊</button>
       <button id="imgBtn" class="btn ghost icon hidden" title="发送图片" aria-hidden="true">🖼️</button>
       <input id="fileInput" type="file" accept="image/*" hidden />
       <button id="fileBtn" class="btn ghost icon" title="发送文件">📎</button>
@@ -69,9 +70,16 @@
       <input id="textInput" placeholder="输入消息，回车发送…" autocomplete="off" />
       <button id="sendBtn" class="btn">发送</button>
     </footer>
+
+    <!-- 贴吧风格表情面板（点击表情按钮弹出，点击外部收起） -->
+    <div id="emojiPanel" class="emoji-panel hidden">
+      <div class="emoji-tabs" id="emojiTabs"></div>
+      <div class="emoji-grid" id="emojiGrid"></div>
+    </div>
   </div>
 
   <script src="/avatarMap.js"></script>
+  <script src="/emojiData.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

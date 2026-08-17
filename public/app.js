@@ -24,6 +24,12 @@
   const shareBtn = $('shareBtn');
   const leaveBtn = $('leaveBtn');
 
+  // 表情面板元素
+  const emojiBtn = $('emojiBtn');
+  const emojiPanel = $('emojiPanel');
+  const emojiTabs = $('emojiTabs');
+  const emojiGrid = $('emojiGrid');
+
   // 粘贴/选择图片后的 inline 预览（微信风格）
   const imagePreviewArea = $('imagePreviewArea');
   const imagePreviewThumb = $('imagePreviewThumb');
@@ -330,7 +336,7 @@
     } else {
       const txt = document.createElement('div');
       txt.className = 'msg-text';
-      txt.textContent = m.text; // textContent 天然防 XSS
+      txt.innerHTML = renderEmojiText(m.text); // 先转义再解析 [表情名]，防 XSS 且支持内联表情
       body.appendChild(txt);
     }
 
@@ -587,6 +593,85 @@
     }
   }
 
+  // ---------- 贴吧表情面板 ----------
+  let emojiBuilt = false;
+
+  function buildEmojiPanel() {
+    if (emojiBuilt) return;
+    emojiBuilt = true;
+    const cats = Object.keys(window.TIEBA_EMOJIS || {});
+    emojiTabs.innerHTML = '';
+    cats.forEach((cat, idx) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'emoji-tab' + (idx === 0 ? ' active' : '');
+      b.textContent = cat;
+      b.addEventListener('click', () => {
+        emojiTabs.querySelectorAll('.emoji-tab').forEach((t) => t.classList.remove('active'));
+        b.classList.add('active');
+        renderEmojiGrid(cat);
+      });
+      emojiTabs.appendChild(b);
+    });
+    renderEmojiGrid(cats[0]);
+  }
+
+  function renderEmojiGrid(cat) {
+    emojiGrid.innerHTML = '';
+    const list = (window.TIEBA_EMOJIS && window.TIEBA_EMOJIS[cat]) || [];
+    list.forEach((e) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'emoji-item';
+      item.title = e.name;
+      const img = document.createElement('img');
+      img.src = '/emojis/' + e.file;
+      img.alt = e.name;
+      img.loading = 'lazy';
+      item.appendChild(img);
+      item.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        insertEmoji(e.name);
+      });
+      emojiGrid.appendChild(item);
+    });
+  }
+
+  // 在输入框光标处插入 [表情名] token；若浏览器不支持 selection，则追加到末尾
+  function insertEmoji(name) {
+    const token = '[' + name + ']';
+    const el = textInput;
+    const start = typeof el.selectionStart === 'number' ? el.selectionStart : el.value.length;
+    const end = typeof el.selectionEnd === 'number' ? el.selectionEnd : el.value.length;
+    el.value = el.value.slice(0, start) + token + el.value.slice(end);
+    const pos = start + token.length;
+    el.focus();
+    try { el.setSelectionRange(pos, pos); } catch (_) {}
+  }
+
+  function toggleEmojiPanel(force) {
+    const show = force === undefined ? emojiPanel.classList.contains('hidden') : force;
+    if (show) {
+      buildEmojiPanel();
+      emojiPanel.classList.remove('hidden');
+    } else {
+      emojiPanel.classList.add('hidden');
+    }
+  }
+
+  // 消息文本中的 [表情名] -> 内联 <img class="emoji">；未知方括号保持原样（先转义防 XSS）
+  function renderEmojiText(text) {
+    const escaped = escapeHtml(text);
+    const map = window.EMOJI_MAP || {};
+    return escaped.replace(/\[([^\]]+)\]/g, (m, name) => {
+      if (map[name]) {
+        const alt = escapeHtml(name);
+        return '<img class="emoji" src="/emojis/' + map[name] + '" alt="' + alt + '" title="' + alt + '">';
+      }
+      return m;
+    });
+  }
+
   // ---------- 事件绑定 ----------
   joinBtn.addEventListener('click', doJoin);
   roomInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doJoin(); });
@@ -612,6 +697,21 @@
   shareBtn.addEventListener('click', doShare);
   leaveBtn.addEventListener('click', () => {
     showJoin();
+  });
+
+  // 表情面板：点击按钮开关；点击面板外部（含输入框）收起，保证交互流畅
+  emojiBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    toggleEmojiPanel();
+  });
+  document.addEventListener('click', (ev) => {
+    if (emojiPanel.classList.contains('hidden')) return;
+    if (emojiPanel.contains(ev.target) || emojiBtn.contains(ev.target) || ev.target === textInput) return;
+    toggleEmojiPanel(false);
+  });
+  // Esc 收起面板
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !emojiPanel.classList.contains('hidden')) toggleEmojiPanel(false);
   });
 
   // 密码可见化
