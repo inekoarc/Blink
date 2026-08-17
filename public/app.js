@@ -352,11 +352,24 @@
 
   function connect() {
     setStatus('连接中喵~');
-    ws = new WebSocket(wsUrl());
+    joinErr.textContent = '连接中喵~…';
+    const url = wsUrl();
+    console.log('[ws] connecting to', url);
+    ws = new WebSocket(url);
+
+    // 连接握手超时保护：若 5 秒内没进入 open，提示用户
+    const openTimer = setTimeout(() => {
+      console.warn('[ws] open timeout');
+      if (!joined && ws && ws.readyState !== WebSocket.OPEN) {
+        joinErr.textContent = '连接 handshake 超时，请检查网络或刷新喵~';
+      }
+    }, 5000);
 
     ws.onopen = () => {
+      clearTimeout(openTimer);
       retry = 0;
       joined = false;
+      console.log('[ws] open, joining room', currentRoom);
       ws.send(JSON.stringify({ type: 'join', room: currentRoom, password: currentPw }));
     };
 
@@ -393,13 +406,24 @@
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
+      clearTimeout(openTimer);
+      console.log('[ws] close', ev.code, ev.reason);
+      if (!joined) {
+        // 还没成功进入房间就断了：留在登录页并给出提示
+        joinErr.textContent = '连接被断开，请刷新或检查服务器喵~';
+      }
       if (!currentRoom) return;
       setStatus('连接断开，重连中喵~', 'err');
       scheduleReconnect();
     };
 
-    ws.onerror = () => {
+    ws.onerror = (ev) => {
+      clearTimeout(openTimer);
+      console.error('[ws] error', ev);
+      if (!joined) {
+        joinErr.textContent = 'WebSocket 连接出错，请打开控制台查看详情喵~';
+      }
       ws.close();
     };
   }
@@ -528,7 +552,10 @@
     if (ws) { try { ws.close(); } catch {} ws = null; }
     joinErr.textContent = '检查中喵~…';
     try {
-      const res = await fetch('/api/room/check?room=' + encodeURIComponent(room));
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 8000);
+      const res = await fetch('/api/room/check?room=' + encodeURIComponent(room), { signal: ctl.signal });
+      clearTimeout(t);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '检查失败喵~');
       if (!data.exists) throw new Error('房间不存在喵~，请联系管理员');
@@ -545,7 +572,8 @@
       history.replaceState(null, '', u);
       connect();
     } catch (e) {
-      joinErr.textContent = e.message;
+      joinErr.textContent = e.name === 'AbortError' ? '检查房间超时，请刷新再试喵~' : (e.message || '检查失败喵~');
+      console.error('[doJoin error]', e);
     }
   }
 
