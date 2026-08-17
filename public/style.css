@@ -851,3 +851,145 @@ td .ops { display: flex; gap: 8px; }
   border-radius: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
 }
+
+/* ============================================================
+   大文件分片上传进度面板
+   ============================================================ */
+.upload-panel {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 64px;                 /* 浮在 composer 上方 */
+  z-index: 28;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) transparent;
+}
+.upload-panel.hidden { display: none; }
+.upload-panel::-webkit-scrollbar { width: 6px; }
+.upload-panel::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 3px; }
+
+.up-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 12px 13px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4);
+  animation: emoji-pop 0.12s ease-out;
+}
+.up-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.up-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 状态徽标：随状态变色的「上传中 / 暂停 / 完成 / 失败」标签 */
+.up-badge {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.up-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.up-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+  transition: width 0.2s ease;
+}
+.up-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.up-pct { color: var(--text); font-weight: 600; flex: none; }
+.up-info { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.up-actions { display: flex; gap: 6px; flex: none; }
+.up-btn {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 11px;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.up-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+/* 状态配色 */
+.up-card.state-uploading .up-badge,
+.up-card.state-retrying .up-badge {
+  color: #8ec5ff; background: rgba(142, 197, 255, 0.14); border-color: rgba(142, 197, 255, 0.4);
+}
+.up-card.state-paused .up-badge {
+  color: #ffd27a; background: rgba(255, 210, 122, 0.14); border-color: rgba(255, 210, 122, 0.4);
+}
+.up-card.state-completed .up-badge {
+  color: var(--ok); background: rgba(95, 211, 164, 0.14); border-color: rgba(95, 211, 164, 0.4);
+}
+.up-card.state-failed .up-badge {
+  color: var(--err); background: rgba(255, 107, 138, 0.14); border-color: rgba(255, 107, 138, 0.4);
+}
+.up-card.state-canceled .up-badge {
+  color: var(--muted); background: rgba(154, 143, 176, 0.12); border-color: var(--border);
+}
+.up-card.state-failed .up-fill { background: linear-gradient(90deg, #ff8aa3, var(--err)); }
+.up-card.state-paused .up-fill { background: #ffd27a; }
+.up-card.state-completed .up-fill { background: linear-gradient(90deg, #7fe3bd, var(--ok)); }
+.up-card.state-canceled { opacity: 0.6; }
+
+/* 完成摘要（文件名 / 大小 / 耗时 / 平均速度） */
+.up-summary {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.up-summary.hidden { display: none; }
+.up-sum-title { font-weight: 600; color: var(--ok); margin-bottom: 6px; }
+.up-sum-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+  color: var(--muted);
+}
+.up-sum-row b {
+  color: var(--text);
+  font-weight: 600;
+  max-width: 60%;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 窄屏适配：面板更贴边、字号略缩，保证小屏也能完整显示 */
+@media (max-width: 480px) {
+  .upload-panel { left: 8px; right: 8px; bottom: 60px; max-height: 50vh; }
+  .up-name { font-size: 13px; }
+  .up-meta { font-size: 11px; gap: 6px; }
+  .up-btn { padding: 4px 9px; }
+}

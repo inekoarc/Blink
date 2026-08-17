@@ -168,6 +168,7 @@ ecosystem.config.js  pm2 配置
 
 - 渲染消息使用 `textContent` / 转义，防止 XSS。
 - 文件上传采用**黑名单**：屏蔽可在浏览器渲染执行、或客户端直接执行的类型（如 html/svg/js/exe/ps1 等），其余类型均可；随机文件名防路径猜测与穿越。
+- **大文件分片上传**：前端 `uploader.js` 按 2MB 分片逐片 POST 到 `/api/upload/chunk`，服务端落 `data/chunks/<fileId>/<index>.part`；全部就绪后 `/api/upload/complete` 合并为最终文件。支持实时进度/速度、暂停/继续/取消、网络中断自动重试与断点续传（`/api/upload/status` 查询已传分片）；未完成的上传临时目录每 10 分钟自动回收（2 小时未改动即清理）。
 - 上传的文件广播仅允许本站 `/uploads/` 路径，防外链注入。
 - 房间密码与文件内容在客户端 → 服务端明文传输，**必须配合 HTTPS** 使用才安全。
 

@@ -18,6 +18,7 @@ const hostAllocator = new HostIdAllocator(CHARACTER_POOL);
 
 const PORT = process.env.PORT || 7777;
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 50);
+const CHUNK_SIZE = 2 * 1024 * 1024; // 分片上传单片大小（2MB，须与前端一致）
 const MAX_HISTORY = Number(process.env.MAX_HISTORY || 500);
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || require('crypto').randomBytes(12).toString('hex');
 const ADMIN_TOKEN_TTL = Number(process.env.ADMIN_TOKEN_TTL || 1000 * 60 * 60 * 24); // 默认 24h
@@ -25,6 +26,7 @@ const ADMIN_TOKEN_TTL = Number(process.env.ADMIN_TOKEN_TTL || 1000 * 60 * 60 * 2
 const DATA_DIR = path.join(__dirname, 'data');
 const MSG_DIR = path.join(DATA_DIR, 'messages');
 const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
+const CHUNK_DIR = path.join(DATA_DIR, 'chunks'); // 分片上传临时目录（合并后清理）
 const ROOMS_FILE = path.join(DATA_DIR, 'rooms.json');
 
 // 上传类型安全策略：采用黑名单，屏蔽可在浏览器渲染执行、或在客户端
@@ -46,7 +48,7 @@ function extFromName(name) {
 // ---------- 数据目录与持久化辅助 ----------
 
 function ensureDirs() {
-  for (const d of [DATA_DIR, MSG_DIR, UPLOAD_DIR]) {
+  for (const d of [DATA_DIR, MSG_DIR, UPLOAD_DIR, CHUNK_DIR]) {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
   }
 }
@@ -210,6 +212,22 @@ function scheduleRoomDestroy() {
   destroyTimer = setInterval(tick, 30 * 1000); // 每 30 秒扫描一次
 }
 
+// 清理过期分片临时目录：未完成/中断的上传会残留 .part 分片，定期回收避免磁盘泄漏
+function cleanupChunks() {
+  try {
+    if (!fs.existsSync(CHUNK_DIR)) return;
+    const now = Date.now();
+    const MAX_AGE = 2 * 60 * 60 * 1000; // 2 小时未改动的临时目录回收
+    for (const fid of fs.readdirSync(CHUNK_DIR)) {
+      const dir = path.join(CHUNK_DIR, fid);
+      try {
+        const st = fs.statSync(dir);
+        if (now - st.mtimeMs > MAX_AGE) fs.rmSync(dir, { recursive: true, force: true });
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+}
+
 // ---------- 管理员会话（token） ----------
 const adminSessions = new Map(); // token -> 过期时间戳(ms)
 
@@ -298,6 +316,104 @@ app.post('/api/upload', (req, res) => {
       .slice(0, 120);
     res.json({ url, name: safeName, size: req.file.size });
   });
+});
+
+// ---------- 分片上传（大文件 / 断点续传 / 暂停继续） ----------
+// 协议：客户端按 fileId（文件元信息 SHA-256 十六进制）逐片 POST 到 /chunk，服务端将每片存为
+// DATA/chunks/<fileId>/<index>.part；所有分片就绪后 POST /complete 合并为最终文件；
+// GET /status 返回已收到的分片下标（断点续传用），取消时 POST /cancel 清理临时目录。
+const SAFE_FILE_ID = /^[a-f0-9]{16,128}$/;
+
+const chunkUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const fid = String((req.body && req.body.fileId) || '');
+      if (!SAFE_FILE_ID.test(fid)) return cb(new Error('无效的 fileId'));
+      const dir = path.join(CHUNK_DIR, fid);
+      try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { return cb(e); }
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+      const idx = parseInt((req.body && req.body.index), 10);
+      if (!Number.isInteger(idx) || idx < 0) return cb(new Error('无效的 chunk index'));
+      cb(null, idx + '.part');
+    },
+  }),
+  // 单片上限略大于 CHUNK_SIZE，容忍边界溢出
+  limits: { fileSize: CHUNK_SIZE + 1024 * 1024, files: 1 },
+});
+
+// 接收单个分片
+app.post('/api/upload/chunk', (req, res) => {
+  chunkUpload.single('chunk')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: '未收到分片喵~' });
+    res.json({ ok: true, index: parseInt(req.body.index, 10) });
+  });
+});
+
+// 查询已收到的分片下标，支持断点续传
+app.get('/api/upload/status', (req, res) => {
+  const fid = String(req.query.fileId || '');
+  if (!SAFE_FILE_ID.test(fid)) return res.status(400).json({ error: '无效的 fileId' });
+  const dir = path.join(CHUNK_DIR, fid);
+  let received = [];
+  try {
+    received = fs.readdirSync(dir)
+      .filter((f) => /^\d+\.part$/.test(f))
+      .map((f) => parseInt(f, 10));
+  } catch { /* 目录不存在视为无分片 */ }
+  res.json({ received });
+});
+
+// 取消上传：清理该 fileId 的临时分片目录
+app.post('/api/upload/cancel', (req, res) => {
+  const fid = String((req.body && req.body.fileId) || '');
+  if (!SAFE_FILE_ID.test(fid)) return res.status(400).json({ error: '无效的 fileId' });
+  fs.rm(path.join(CHUNK_DIR, fid), { recursive: true, force: true }, () => {});
+  res.json({ ok: true });
+});
+
+// 合并分片为最终文件并返回可访问 URL
+app.post('/api/upload/complete', async (req, res) => {
+  const body = req.body || {};
+  const fid = String(body.fileId || '');
+  const total = parseInt(body.total, 10);
+  const size = parseInt(body.size, 10);
+  if (!SAFE_FILE_ID.test(fid)) return res.status(400).json({ error: '无效的 fileId' });
+  if (!Number.isInteger(total) || total <= 0 || total > 20000) return res.status(400).json({ error: '无效的 total' });
+  if (!Number.isInteger(size) || size <= 0) return res.status(400).json({ error: '无效的文件大小' });
+  const dir = path.join(CHUNK_DIR, fid);
+  // 校验分片齐全，且累计大小与声明一致（防篡改 / 丢片）
+  let sum = 0;
+  for (let i = 0; i < total; i++) {
+    const p = path.join(dir, i + '.part');
+    let st;
+    try { st = fs.statSync(p); } catch { return res.status(409).json({ error: '分片缺失', missing: i }); }
+    sum += st.size;
+  }
+  if (sum !== size) return res.status(400).json({ error: '分片大小与声明不符', sum, size });
+  // 合并为最终文件（随机名 + 安全扩展名）
+  let ext = extFromName(String(body.name || ''));
+  if (BLOCKED_EXT.has(ext)) ext = 'bin';
+  const finalName = crypto.randomBytes(16).toString('hex') + (ext ? '.' + ext : '');
+  const finalPath = path.join(UPLOAD_DIR, finalName);
+  try {
+    const fh = await fs.promises.open(finalPath, 'w');
+    for (let i = 0; i < total; i++) {
+      const buf = await fs.promises.readFile(path.join(dir, i + '.part'));
+      await fh.write(buf);
+    }
+    await fh.close();
+  } catch (e) {
+    return res.status(500).json({ error: '合并失败：' + e.message });
+  }
+  // 清理临时分片
+  fs.rm(dir, { recursive: true, force: true }, () => {});
+  const safeName = String(body.name || 'file')
+    .replace(/[\\/:*?"<>|\n\r\t]/g, '_')
+    .slice(0, 120);
+  res.json({ url: '/uploads/' + finalName, name: safeName, size });
 });
 
 // 健康检查
@@ -596,6 +712,8 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`Blink 运行中: http://localhost:${PORT}`);
   console.log(`管理员页面: http://localhost:${PORT}/admin.html`);
   scheduleRoomDestroy(); // 启动自动销毁扫描（含启动即清理到期房间）
+  cleanupChunks();
+  setInterval(cleanupChunks, 10 * 60 * 1000); // 每 10 分钟回收过期分片临时目录
   if (!process.env.ADMIN_PASSWORD) {
     console.warn(`[安全提示] 未设置 ADMIN_PASSWORD 环境变量，已生成随机管理员密码：${ADMIN_PASSWORD}`);
     console.warn('[安全提示] 公网部署前请务必通过环境变量 ADMIN_PASSWORD 设置强密码。');

@@ -23,6 +23,7 @@
   const fileAllInput = $('fileAllInput');
   const shareBtn = $('shareBtn');
   const leaveBtn = $('leaveBtn');
+  const uploadPanel = $('uploadPanel');
 
   // 表情面板元素
   const emojiBtn = $('emojiBtn');
@@ -54,6 +55,16 @@
       if (d && Array.isArray(d.names)) d.names.forEach(n => avatarNames.add(n));
     }).catch(() => {});
   } catch (_) {}
+
+  // 初始化分片上传管理器（进度条/暂停/断点续传），完成后通过 WS 广播文件消息
+  if (window.uploadManager && uploadPanel) {
+    window.uploadManager.init(uploadPanel);
+    window.uploadManager.onComplete = (info) => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'file', url: info.url, name: info.name, size: info.size }));
+      }
+    };
+  }
 
   // 从 URL 预填房间号
   const params = new URLSearchParams(location.search);
@@ -506,24 +517,6 @@
     }
   }
 
-  async function sendFile(file) {
-    if (!file) return;
-    setStatus('上传中…');
-    const fd = new FormData();
-    fd.append('file', file);
-    try {
-      const res = await fetch('/api/upload', { method: 'POST', body: fd });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || '上传失败');
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'file', url: data.url, name: pickName(file), size: data.size }));
-      }
-      setStatus('');
-    } catch (e) {
-      setStatus(e.message || '上传失败', 'err');
-    }
-  }
-
   // ---------- 界面切换 ----------
   function showChat() {
     joinScreen.classList.add('hidden');
@@ -690,7 +683,8 @@
   fileBtn.addEventListener('click', () => fileAllInput.click());
   fileAllInput.addEventListener('change', (e) => {
     const f = e.target.files && e.target.files[0];
-    sendFile(f);
+    // 走分片上传器（带进度条 / 暂停 / 断点续传），完成后回调发送 WS 文件消息
+    if (f) window.uploadManager.addFile(f);
     fileAllInput.value = '';
   });
 
