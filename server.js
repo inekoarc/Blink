@@ -235,8 +235,17 @@ function validAdminToken(token) {
 const app = express();
 app.use(express.json());
 
-// 静态前端
-app.use(express.static(path.join(__dirname, 'public')));
+// 静态前端：HTML/CSS/JS 禁止浏览器缓存，确保代码更新后即时生效
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    if (['.html', '.css', '.js'].includes(ext)) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  },
+}));
 
 // 上传的文件（图片、文档等任意类型）静态服务
 app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
