@@ -362,7 +362,10 @@ app.post('/api/upload/chunk', (req, res) => {
     if (err) {
       const fid = (req.body && req.body.fileId) || '-';
       const idx = (req.body && req.body.index) || '-';
-      console.error(`[upload chunk error] ip=${req.ip || '-'} fileId=${fid} index=${idx} msg=${err.message}`);
+      const code = err.code || '-';
+      const type = err instanceof multer.MulterError ? 'MulterError' : err.constructor.name;
+      console.error(`[upload chunk error] ip=${req.ip || '-'} fileId=${fid} index=${idx} type=${type} code=${code} msg=${err.message}`);
+      console.error(err.stack);
       return res.status(400).json({ error: err.message });
     }
     if (!req.file) {
