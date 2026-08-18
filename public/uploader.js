@@ -131,8 +131,10 @@
               return;
             }
             const isHttp = err && err.message && !/^(网络错误|请求超时|已取消|进度停滞)/.test(err.message);
-            const label = isHttp ? '服务器错误，正在重试' : '网络中断，正在重连';
+            const detail = isHttp ? (err.message || '') : '';
+            const label = isHttp ? ('服务器错误' + (detail ? '：' + detail : '') + '，正在重试') : '网络中断，正在重连';
             this._setState('retrying', label + '…(' + this.retries + '/' + MAX_RETRIES + ')');
+            if (isHttp) console.error('[upload chunk]', err.message);
             await sleep(Math.min(1000 * 2 ** (this.retries - 1), 8000));
           }
         }
@@ -176,7 +178,7 @@
             let msg = '服务器返回 HTTP ' + xhr.status;
             try {
               const j = JSON.parse(xhr.responseText);
-              if (j.error) msg = j.error;
+              if (j.error) msg += ': ' + j.error;
             } catch {}
             reject(new Error(msg));
           }

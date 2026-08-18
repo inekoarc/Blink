@@ -359,8 +359,18 @@ const chunkUpload = multer({
 // 接收单个分片
 app.post('/api/upload/chunk', (req, res) => {
   chunkUpload.single('chunk')(req, res, (err) => {
-    if (err) return res.status(400).json({ error: err.message });
-    if (!req.file) return res.status(400).json({ error: '未收到分片喵~' });
+    if (err) {
+      const fid = (req.body && req.body.fileId) || '-';
+      const idx = (req.body && req.body.index) || '-';
+      console.error(`[upload chunk error] ip=${req.ip || '-'} fileId=${fid} index=${idx} msg=${err.message}`);
+      return res.status(400).json({ error: err.message });
+    }
+    if (!req.file) {
+      const fid = (req.body && req.body.fileId) || '-';
+      const idx = (req.body && req.body.index) || '-';
+      console.error(`[upload chunk error] ip=${req.ip || '-'} fileId=${fid} index=${idx} msg=no file received`);
+      return res.status(400).json({ error: '未收到分片喵~' });
+    }
     res.json({ ok: true, index: parseInt(req.body.index, 10) });
   });
 });
@@ -394,18 +404,30 @@ app.post('/api/upload/complete', async (req, res) => {
   const total = parseInt(body.total, 10);
   const size = parseInt(body.size, 10);
   if (!SAFE_FILE_ID.test(fid)) return res.status(400).json({ error: '无效的 fileId' });
-  if (!Number.isInteger(total) || total <= 0 || total > 20000) return res.status(400).json({ error: '无效的 total' });
-  if (!Number.isInteger(size) || size <= 0) return res.status(400).json({ error: '无效的文件大小' });
+  if (!Number.isInteger(total) || total <= 0 || total > 20000) {
+    console.error(`[upload complete error] ip=${req.ip || '-'} fileId=${fid} reason=invalid_total value=${total}`);
+    return res.status(400).json({ error: '无效的 total' });
+  }
+  if (!Number.isInteger(size) || size <= 0) {
+    console.error(`[upload complete error] ip=${req.ip || '-'} fileId=${fid} reason=invalid_size value=${size}`);
+    return res.status(400).json({ error: '无效的文件大小' });
+  }
   const dir = path.join(CHUNK_DIR, fid);
   // 校验分片齐全，且累计大小与声明一致（防篡改 / 丢片）
   let sum = 0;
   for (let i = 0; i < total; i++) {
     const p = path.join(dir, i + '.part');
     let st;
-    try { st = fs.statSync(p); } catch { return res.status(409).json({ error: '分片缺失', missing: i }); }
+    try { st = fs.statSync(p); } catch {
+      console.error(`[upload complete error] ip=${req.ip || '-'} fileId=${fid} reason=missing_chunk index=${i}`);
+      return res.status(409).json({ error: '分片缺失', missing: i });
+    }
     sum += st.size;
   }
-  if (sum !== size) return res.status(400).json({ error: '分片大小与声明不符', sum, size });
+  if (sum !== size) {
+    console.error(`[upload complete error] ip=${req.ip || '-'} fileId=${fid} reason=size_mismatch sum=${sum} size=${size}`);
+    return res.status(400).json({ error: '分片大小与声明不符', sum, size });
+  }
   // 合并为最终文件（保留原始文件名 + 安全扩展名；渲染高风险类型降级为 .bin）
   let { stem, ext } = splitName(String(body.name || ''));
   if (RENDER_RISK_EXT.has(ext)) ext = 'bin';
@@ -419,6 +441,7 @@ app.post('/api/upload/complete', async (req, res) => {
     }
     await fh.close();
   } catch (e) {
+    console.error(`[upload complete error] ip=${req.ip || '-'} fileId=${fid} reason=merge_failed msg=${e.message}`);
     return res.status(500).json({ error: '合并失败：' + e.message });
   }
   // 清理临时分片
