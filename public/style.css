@@ -856,15 +856,13 @@ td .ops { display: flex; gap: 8px; }
    大文件分片上传进度面板
    ============================================================ */
 .upload-panel {
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 64px;                 /* 浮在 composer 上方 */
-  z-index: 28;
+  /* 改为文档流占位：位于 composer 上方，不脱离布局，避免遮挡聊天记录 */
+  flex: none;
+  margin: 0 12px 12px;          /* 下间距与 composer 分隔 */
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 46vh;
+  max-height: 38vh;
   overflow-y: auto;
   padding-right: 2px;
   scrollbar-width: thin;
@@ -997,7 +995,7 @@ td .ops { display: flex; gap: 8px; }
 
 /* 窄屏适配：面板更贴边、字号略缩，保证小屏也能完整显示 */
 @media (max-width: 480px) {
-  .upload-panel { left: 8px; right: 8px; bottom: 60px; max-height: 50vh; }
+  .upload-panel { margin: 0 8px 10px; max-height: 42vh; }
   .up-name { font-size: 13px; }
   .up-meta { font-size: 11px; gap: 6px; }
   .up-btn { padding: 4px 9px; }
