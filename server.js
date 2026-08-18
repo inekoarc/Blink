@@ -29,14 +29,12 @@ const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const CHUNK_DIR = path.join(DATA_DIR, 'chunks'); // 分片上传临时目录（合并后清理）
 const ROOMS_FILE = path.join(DATA_DIR, 'rooms.json');
 
-// 上传类型安全策略：采用黑名单，屏蔽可在浏览器渲染执行、或在客户端
-// 直接执行的文件类型（html/svg/js/exe/ps1 等），其余一切文件类型均可传。
-const BLOCKED_EXT = new Set([
-  'exe', 'msi', 'bat', 'cmd', 'com', 'scr', 'pif', 'vb', 'vbs', 'js', 'jse',
-  'ws', 'wsf', 'wsh', 'ps1', 'ps1xml', 'psc1', 'msh', 'msh1', 'msh2', 'jar',
-  'app', 'deb', 'rpm', 'run', 'sh', 'csh', 'ksh', 'zsh', 'py', 'pyw', 'hta',
-  'lnk', 'scf', 'inf', 'reg', 'msc', 'gadget', 'application',
-  'html', 'htm', 'xhtml', 'svg', 'php', 'asp', 'aspx', 'jsp', 'cgi', 'pl',
+// 上传类型策略：不再拦截任何文件类型（含 exe 等可执行文件），任何类型均可传。
+// 仅对「浏览器会直接渲染执行」的少数类型在存储时降级为 .bin（下载名仍保留原始名），
+// 避免他人点击 .html/.svg 等即执行其中脚本。其余类型按真实扩展名存储。
+const RENDER_RISK_EXT = new Set([
+  'html', 'htm', 'xhtml', 'svg', 'js', 'jse', 'php', 'asp', 'aspx', 'jsp',
+  'cgi', 'pl', 'hta', 'wsh', 'wsf', 'vbs', 'vbe', 'ps1', 'psm1', 'sh',
 ]);
 
 // 从原始文件名提取安全扩展名（仅字母数字，最长 10 位）
@@ -285,9 +283,9 @@ app.get('/api/avatars', (req, res) => {
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
   filename: (req, file, cb) => {
-    // 保留原始扩展名（若被黑名单命中则用 .bin 兜底），文件名主体随机防猜测
+    // 保留原始扩展名；仅对「浏览器会渲染执行」的类型降级为 .bin，防打开即执行
     let ext = extFromName(file.originalname);
-    if (BLOCKED_EXT.has(ext)) ext = 'bin';
+    if (RENDER_RISK_EXT.has(ext)) ext = 'bin';
     const name = crypto.randomBytes(16).toString('hex') + (ext ? '.' + ext : '');
     cb(null, name);
   },
@@ -296,11 +294,7 @@ const upload = multer({
   storage,
   limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024, files: 1 },
   fileFilter: (req, file, cb) => {
-    // 允许一切非黑名单扩展名的文件（图片、文档、压缩包、安装包等均可）
-    const ext = extFromName(file.originalname);
-    if (BLOCKED_EXT.has(ext)) {
-      return cb(new Error('不支持该文件类型喵~（出于安全限制可执行/脚本类文件）'));
-    }
+    // 不再拦截任何文件类型：任意扩展名均可上传
     cb(null, true);
   },
 });
@@ -393,9 +387,9 @@ app.post('/api/upload/complete', async (req, res) => {
     sum += st.size;
   }
   if (sum !== size) return res.status(400).json({ error: '分片大小与声明不符', sum, size });
-  // 合并为最终文件（随机名 + 安全扩展名）
+  // 合并为最终文件（随机名 + 安全扩展名；渲染高风险类型降级为 .bin）
   let ext = extFromName(String(body.name || ''));
-  if (BLOCKED_EXT.has(ext)) ext = 'bin';
+  if (RENDER_RISK_EXT.has(ext)) ext = 'bin';
   const finalName = crypto.randomBytes(16).toString('hex') + (ext ? '.' + ext : '');
   const finalPath = path.join(UPLOAD_DIR, finalName);
   try {
