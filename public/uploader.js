@@ -395,7 +395,7 @@
       const pct = this.percent;
       this.elFill.style.width = pct + '%';
       this.elPct.textContent = pct + '%';
-      const info = fmtSize(this.loaded) + ' / ' + fmtSize(this.file.size);
+      let info = fmtSize(this.loaded) + ' / ' + fmtSize(this.file.size);
       if (this.state === 'uploading' || this.state === 'retrying') {
         if (this.speed > 0) info += '  ·  ' + fmtSize(this.speed) + '/s';
         const remain = this.speed > 0 ? (this.file.size - this.loaded) / this.speed : 0;
