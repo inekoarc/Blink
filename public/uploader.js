@@ -11,6 +11,8 @@
   const CHUNK_SIZE = 2 * 1024 * 1024; // 须与服务端一致
   const MAX_RETRIES = 6;              // 单片网络错误最大重试次数
   const MAX_FILE_SIZE = 4 * 1024 * 1024 * 1024; // 4GB 上限，保护磁盘
+  const CHUNK_TIMEOUT_MS = 60 * 1000; // 单分片最长 60 秒无响应即超时（含传输中）
+  const STALL_TIMEOUT_MS = 15 * 1000; // 15 秒进度没变化视为卡死，主动重试
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -59,6 +61,10 @@
       this.el = null;
       this.built = false;
       this._timer = null;
+      this._stallTimer = null;
+      this._lastProgressBytes = 0;
+      this._lastProgressTime = 0;
+      this._stalled = false;
     }
 
     get loaded() { return Math.min(this.bytesConfirmed + this.curLoaded, this.file.size); }
@@ -115,13 +121,17 @@
             this.retries = 0;
             this._updateProgress();
           } catch (err) {
+            this._clearStallWatch();
             if (this.cancelled) break;
+            this.curLoaded = 0; // 当前分片进度归零，避免进度条卡住
             this.retries++;
             if (this.retries > MAX_RETRIES) {
               this._setState('failed', '上传失败：' + (err && err.message ? err.message : '网络错误'));
               return;
             }
-            this._setState('retrying', '网络中断，正在重连…(' + this.retries + '/' + MAX_RETRIES + ')');
+            const isHttp = err && err.message && !/^(网络错误|请求超时|已取消|进度停滞)/.test(err.message);
+            const label = isHttp ? '服务器错误，正在重试' : '网络中断，正在重连';
+            this._setState('retrying', label + '…(' + this.retries + '/' + MAX_RETRIES + ')');
             await sleep(Math.min(1000 * 2 ** (this.retries - 1), 8000));
           }
         }
@@ -135,29 +145,66 @@
       return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         this.xhr = xhr;
+        this._stalled = false;
         xhr.open('POST', '/api/upload/chunk');
+        xhr.timeout = CHUNK_TIMEOUT_MS;
         const fd = new FormData();
         fd.append('fileId', this.fileId);
         fd.append('index', String(index));
         fd.append('total', String(this.total));
         fd.append('chunk', blob);
         const base = this.bytesConfirmed;
+        const now = Date.now();
+        this._lastProgressBytes = base;
+        this._lastProgressTime = now;
+        this._startStallWatch();
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
             this.curLoaded = e.loaded;
+            this._lastProgressBytes = base + e.loaded;
+            this._lastProgressTime = Date.now();
             this._sample(Date.now(), base + e.loaded);
             this._updateProgress();
           }
         };
         xhr.onload = () => {
+          this._clearStallWatch();
           this.xhr = null;
           if (xhr.status >= 200 && xhr.status < 300) resolve();
-          else reject(new Error('HTTP ' + xhr.status));
+          else {
+            let msg = '服务器返回 HTTP ' + xhr.status;
+            try {
+              const j = JSON.parse(xhr.responseText);
+              if (j.error) msg = j.error;
+            } catch {}
+            reject(new Error(msg));
+          }
         };
-        xhr.onerror = () => { this.xhr = null; reject(new Error('网络错误')); };
-        xhr.onabort = () => { this.xhr = null; reject(new Error('已取消')); };
+        xhr.onerror = () => { this._clearStallWatch(); this.xhr = null; reject(new Error('网络错误')); };
+        xhr.ontimeout = () => { this._clearStallWatch(); this.xhr = null; reject(new Error('请求超时')); };
+        xhr.onabort = () => {
+          this._clearStallWatch();
+          this.xhr = null;
+          reject(new Error(this._stalled ? '进度停滞' : '已取消'));
+        };
         xhr.send(fd);
       });
+    }
+
+    _startStallWatch() {
+      this._clearStallWatch();
+      this._stallTimer = setInterval(() => {
+        if (this.state !== 'uploading' || !this.xhr) { this._clearStallWatch(); return; }
+        const stalled = Date.now() - this._lastProgressTime > STALL_TIMEOUT_MS;
+        if (stalled && this._lastProgressBytes <= this.bytesConfirmed) {
+          // 进度停滞，主动 abort 触发重试，避免用户必须等浏览器内置超时
+          this._stalled = true;
+          try { this.xhr.abort(); } catch {}
+        }
+      }, 3000);
+    }
+    _clearStallWatch() {
+      if (this._stallTimer) { clearInterval(this._stallTimer); this._stallTimer = null; }
     }
 
     // 速度滑动窗口 + 指数滑动平均，避免数字剧烈跳动
@@ -174,6 +221,7 @@
     }
 
     async _complete() {
+      this._clearStallWatch();
       this._setState('uploading', '合并中…');
       try {
         const res = await fetch('/api/upload/complete', {
@@ -202,6 +250,7 @@
     pause() {
       if (this.state === 'completed' || this.state === 'failed' || this.cancelled) return;
       this.paused = true;
+      this._clearStallWatch();
       if (this.xhr) { try { this.xhr.abort(); } catch {} }
       this._setState('paused');
     }
@@ -216,6 +265,7 @@
     cancel() {
       this.cancelled = true;
       this.paused = false;
+      this._clearStallWatch();
       if (this.xhr) { try { this.xhr.abort(); } catch {} }
       this._setState('canceled');
       this._resolveWaiters();
