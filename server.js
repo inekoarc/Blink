@@ -37,10 +37,30 @@ const RENDER_RISK_EXT = new Set([
   'cgi', 'pl', 'hta', 'wsh', 'wsf', 'vbs', 'vbe', 'ps1', 'psm1', 'sh',
 ]);
 
-// 从原始文件名提取安全扩展名（仅字母数字，最长 10 位）
-function extFromName(name) {
-  const m = String(name || '').toLowerCase().match(/\.([a-z0-9]{1,10})$/);
-  return m ? m[1] : '';
+// 从文件名拆分为「主体 + 扩展名」（扩展名仅字母数字，最长 10 位）
+function splitName(name) {
+  const s = String(name || '');
+  const m = s.toLowerCase().match(/\.([a-z0-9]{1,10})$/);
+  if (m) return { stem: s.slice(0, -(m[1].length + 1)), ext: m[1] };
+  return { stem: s, ext: '' };
+}
+
+// 文件名净化：去除路径分隔等非法字符，避免路径穿越 / 非法文件名（保留中文等正常字符）
+function sanitizeName(s) {
+  return String(s || '').replace(/[\\/:*?"<>|\n\r\t]/g, '_').trim();
+}
+
+// 生成不重名的最终存储名（主体 + 安全扩展名），冲突时追加 _1 / _2 …
+function uniqueStoredName(dir, stem, ext) {
+  const base = (sanitizeName(stem) || 'file').slice(0, 100);
+  let candidate = base + (ext ? '.' + ext : '');
+  let i = 1;
+  while (fs.existsSync(path.join(dir, candidate))) {
+    candidate = `${base}_${i}` + (ext ? '.' + ext : '');
+    i += 1;
+    if (i > 99999) break; // 防止极端死循环
+  }
+  return candidate;
 }
 
 // ---------- 数据目录与持久化辅助 ----------
@@ -283,11 +303,10 @@ app.get('/api/avatars', (req, res) => {
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
   filename: (req, file, cb) => {
-    // 保留原始扩展名；仅对「浏览器会渲染执行」的类型降级为 .bin，防打开即执行
-    let ext = extFromName(file.originalname);
+    // 保留原始文件名（净化 + 不重名）；仅对「浏览器会渲染执行」的类型降级为 .bin，防打开即执行
+    let { stem, ext } = splitName(file.originalname);
     if (RENDER_RISK_EXT.has(ext)) ext = 'bin';
-    const name = crypto.randomBytes(16).toString('hex') + (ext ? '.' + ext : '');
-    cb(null, name);
+    cb(null, uniqueStoredName(UPLOAD_DIR, stem, ext));
   },
 });
 const upload = multer({
@@ -303,7 +322,7 @@ app.post('/api/upload', (req, res) => {
   upload.single('file')(req, res, (err) => {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: '未收到文件喵~' });
-    const url = `/uploads/${req.file.filename}`;
+    const url = `/uploads/${encodeURIComponent(req.file.filename)}`;
     // 文件名仅作展示/下载用，去除路径分隔等危险字符
     const safeName = String(req.file.originalname || 'file')
       .replace(/[\\/:*?"<>|\n\r\t]/g, '_')
@@ -387,10 +406,10 @@ app.post('/api/upload/complete', async (req, res) => {
     sum += st.size;
   }
   if (sum !== size) return res.status(400).json({ error: '分片大小与声明不符', sum, size });
-  // 合并为最终文件（随机名 + 安全扩展名；渲染高风险类型降级为 .bin）
-  let ext = extFromName(String(body.name || ''));
+  // 合并为最终文件（保留原始文件名 + 安全扩展名；渲染高风险类型降级为 .bin）
+  let { stem, ext } = splitName(String(body.name || ''));
   if (RENDER_RISK_EXT.has(ext)) ext = 'bin';
-  const finalName = crypto.randomBytes(16).toString('hex') + (ext ? '.' + ext : '');
+  const finalName = uniqueStoredName(UPLOAD_DIR, stem, ext);
   const finalPath = path.join(UPLOAD_DIR, finalName);
   try {
     const fh = await fs.promises.open(finalPath, 'w');
@@ -407,7 +426,7 @@ app.post('/api/upload/complete', async (req, res) => {
   const safeName = String(body.name || 'file')
     .replace(/[\\/:*?"<>|\n\r\t]/g, '_')
     .slice(0, 120);
-  res.json({ url: '/uploads/' + finalName, name: safeName, size });
+  res.json({ url: '/uploads/' + encodeURIComponent(finalName), name: safeName, size });
 });
 
 // 健康检查
