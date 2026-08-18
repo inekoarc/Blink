@@ -28,6 +28,7 @@ const MSG_DIR = path.join(DATA_DIR, 'messages');
 const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const CHUNK_DIR = path.join(DATA_DIR, 'chunks'); // 分片上传临时目录（合并后清理）
 const ROOMS_FILE = path.join(DATA_DIR, 'rooms.json');
+const ROOM_FILES_FILE = path.join(DATA_DIR, 'room-files.json');
 
 // 上传类型策略：不再拦截任何文件类型（含 exe 等可执行文件），任何类型均可传。
 // 仅对「浏览器会直接渲染执行」的少数类型在存储时降级为 .bin（下载名仍保留原始名），
@@ -146,6 +147,56 @@ function loadRooms() {
 
 let roomRegistry = loadRooms();
 
+// 房间 → 文件关联索引：结构 { [room]: [filename, filename, ...] }
+// 用于删除/清空房间时可靠地清理所有本地上传文件（包括上传成功但消息未发送的残留）。
+function loadRoomFiles() {
+  try {
+    const obj = JSON.parse(fs.readFileSync(ROOM_FILES_FILE, 'utf8')) || {};
+    const out = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (Array.isArray(v)) out[k] = v.filter((x) => typeof x === 'string');
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+let roomFiles = loadRoomFiles();
+
+function saveRoomFiles() {
+  fs.writeFile(ROOM_FILES_FILE, JSON.stringify(roomFiles), (err) => {
+    if (err) console.error('保存房间文件索引失败:', err.message);
+  });
+}
+
+// 记录某个文件属于某个房间；幂等，不会重复添加。
+function recordRoomFile(room, filename) {
+  const r = safeRoom(room || '');
+  const fn = String(filename || '').trim();
+  if (!r || !fn) return;
+  if (!roomFiles[r]) roomFiles[r] = [];
+  if (!roomFiles[r].includes(fn)) {
+    roomFiles[r].push(fn);
+    saveRoomFiles();
+  }
+}
+
+// 获取某个房间关联的所有文件名
+function getRoomFiles(room) {
+  const r = safeRoom(room || '');
+  return r && roomFiles[r] ? [...roomFiles[r]] : [];
+}
+
+// 从索引中移除某个房间的全部记录（不删磁盘文件，仅清索引）
+function removeRoomFiles(room) {
+  const r = safeRoom(room || '');
+  if (r && roomFiles[r]) {
+    delete roomFiles[r];
+    saveRoomFiles();
+  }
+}
+
 function saveRooms() {
   fs.writeFile(ROOMS_FILE, JSON.stringify(roomRegistry), (err) => {
     if (err) console.error('保存房间注册表失败:', err.message);
@@ -160,19 +211,33 @@ function roomPassword(room) {
   return roomExists(room) ? (roomRegistry[room].password || null) : undefined;
 }
 
-// 彻底清空一个房间：删除消息文件、关联上传文件、注册表记录，并踢出在线用户
-// 仅清理房间内的消息文件与上传文件（不碰注册表、不踢人、不动连接）
+// 彻底清空一个房间：删除消息文件、关联上传文件，并清内存缓存。
+// 不碰注册表、不踢人、不动连接（destroyRoom 负责那些）。
 function purgeRoomData(room) {
+  // 1) 优先根据「房间-文件索引」删除所有关联上传文件（覆盖上传成功但消息未发送的残留）
+  const indexed = getRoomFiles(room);
+  for (const fn of indexed) {
+    const p = path.join(UPLOAD_DIR, fn);
+    try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* ignore */ }
+  }
+  removeRoomFiles(room);
+
+  // 2) 兜底：再读消息文件，删除其中引用的 /uploads/ 文件（处理旧数据 / 索引缺失的情况）
+  // 注意 URL 是 encodeURIComponent 编码的，需要 decode 后才能匹配磁盘上的中文文件名。
   const f = roomFile(room);
   if (fs.existsSync(f)) {
     try {
       const arr = JSON.parse(fs.readFileSync(f, 'utf8'));
       if (Array.isArray(arr)) {
         for (const m of arr) {
-          // 清理所有落在本站 /uploads/ 下的图片与文件
           if (m && typeof m.url === 'string' && m.url.startsWith('/uploads/')) {
-            const p = path.join(UPLOAD_DIR, path.basename(m.url));
-            try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* ignore */ }
+            const raw = m.url.slice('/uploads/'.length);
+            const decoded = decodeURIComponent(raw);
+            // 同时删除编码名和解码名，避免各种历史残留
+            for (const name of [decoded, raw]) {
+              const p = path.join(UPLOAD_DIR, path.basename('/uploads/' + name));
+              try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* ignore */ }
+            }
           }
         }
       }
@@ -327,6 +392,8 @@ app.post('/api/upload', (req, res) => {
     const safeName = String(req.file.originalname || 'file')
       .replace(/[\\/:*?"<>|\n\r\t]/g, '_')
       .slice(0, 120);
+    // 记录文件与房间的关联，便于删除房间时一并清理
+    recordRoomFile((req.body && req.body.room) || '', req.file.filename);
     res.json({ url, name: safeName, size: req.file.size });
   });
 });
@@ -449,6 +516,8 @@ app.post('/api/upload/complete', async (req, res) => {
   }
   // 清理临时分片
   fs.rm(dir, { recursive: true, force: true }, () => {});
+  // 记录文件与房间的关联，便于删除房间时一并清理
+  recordRoomFile(String(body.room || ''), finalName);
   const safeName = String(body.name || 'file')
     .replace(/[\\/:*?"<>|\n\r\t]/g, '_')
     .slice(0, 120);
@@ -695,6 +764,8 @@ wss.on('connection', (ws) => {
       if (!url.startsWith('/uploads/')) {
         return ws.send(JSON.stringify({ type: 'error', msg: '非法的图片地址喵~' }));
       }
+      // 兜底记录文件与房间关联（兼容旧上传接口未传 room 的情况）
+      try { recordRoomFile(ws.room, decodeURIComponent(url.slice('/uploads/'.length))); } catch { /* ignore */ }
       const message = {
         id: crypto.randomUUID(),
         type: 'image',
@@ -714,6 +785,8 @@ wss.on('connection', (ws) => {
       if (!url.startsWith('/uploads/')) {
         return ws.send(JSON.stringify({ type: 'error', msg: '非法的文件地址喵~' }));
       }
+      // 兜底记录文件与房间关联（兼容旧上传接口未传 room 的情况）
+      try { recordRoomFile(ws.room, decodeURIComponent(url.slice('/uploads/'.length))); } catch { /* ignore */ }
       const message = {
         id: crypto.randomUUID(),
         type: 'file',

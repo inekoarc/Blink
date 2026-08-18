@@ -156,6 +156,7 @@
         fd.append('index', String(index));
         fd.append('total', String(this.total));
         fd.append('chunk', blob);
+        if (this.mgr.room) fd.append('room', this.mgr.room);
         const base = this.bytesConfirmed;
         const now = Date.now();
         this._lastProgressBytes = base;
@@ -235,6 +236,7 @@
             name: this.file.name,
             size: this.file.size,
             total: this.total,
+            room: this.mgr.room,
           }),
         });
         const data = await res.json();
@@ -445,9 +447,11 @@
     constructor() {
       this.tasks = [];
       this.panel = null;
+      this.room = '';          // 当前所在房间，上传时附带，便于删除房间时清理文件
       this.onComplete = null; // 由 app.js 注入：上传完成后发送 WS 文件消息
     }
     init(panelEl) { this.panel = panelEl; }
+    setRoom(room) { this.room = String(room || ''); }
     async addFile(file) {
       if (!file) return;
       if (file.size > MAX_FILE_SIZE) {

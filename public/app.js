@@ -64,6 +64,7 @@
         ws.send(JSON.stringify({ type: 'file', url: info.url, name: info.name, size: info.size }));
       }
     };
+    if (currentRoom) window.uploadManager.setRoom(currentRoom);
   }
 
   // 从 URL 预填房间号
@@ -504,6 +505,7 @@
     setStatus('上传中…');
     const fd = new FormData();
     fd.append('file', file);
+    if (currentRoom) fd.append('room', currentRoom);
     try {
       const res = await fetch('/api/upload', { method: 'POST', body: fd });
       const data = await res.json();
@@ -561,6 +563,8 @@
       if (data.requirePassword && !pwInput.value) throw new Error('这个房间需要密码喵~');
       currentRoom = room;
       currentPw = pwInput.value;
+      // 让上传管理器知道当前房间，上传时附带 room 便于删除房间时清理文件
+      if (window.uploadManager) window.uploadManager.setRoom(room);
       // 记入住址栏 + sessionStorage，刷新可自动重连
       sessionStorage.setItem('relayRoom', room);
       sessionStorage.setItem('relayPw', currentPw);
