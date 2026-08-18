@@ -882,7 +882,7 @@ td .ops { display: flex; gap: 8px; }
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4);
   animation: emoji-pop 0.12s ease-out;
 }
-.up-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.up-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; position: relative; }
 .up-name {
   flex: 1;
   min-width: 0;
@@ -926,6 +926,15 @@ td .ops { display: flex; gap: 8px; }
 .up-pct { color: var(--text); font-weight: 600; flex: none; }
 .up-info { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .up-actions { display: flex; gap: 6px; flex: none; }
+.up-close {
+  padding: 2px 7px;
+  font-size: 16px;
+  line-height: 1;
+  border-radius: 7px;
+  color: var(--muted);
+  margin-left: 4px;
+}
+.up-close:hover { color: var(--err); border-color: var(--err); background: rgba(255, 107, 138, 0.12); }
 .up-btn {
   border: 1px solid var(--border);
   background: var(--panel-2);

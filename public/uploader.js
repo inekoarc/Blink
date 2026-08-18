@@ -65,6 +65,7 @@
       this._lastProgressBytes = 0;
       this._lastProgressTime = 0;
       this._stalled = false;
+      this._autoCloseTimer = null; // 上传成功后自动关闭浮窗的定时器
     }
 
     get loaded() { return Math.min(this.bytesConfirmed + this.curLoaded, this.file.size); }
@@ -242,6 +243,8 @@
         this._setState('completed');
         this._showSummary(data);
         if (this.mgr.onComplete) this.mgr.onComplete({ url: data.url, name: data.name, size: data.size });
+        // 4.5 秒后自动关闭浮窗；用户也可点右上角 × 立即关闭
+        this._autoCloseTimer = setTimeout(() => this.mgr.removeTask(this), 4500);
       } catch (e) {
         this._setState('failed', '合并失败：' + (e.message || '未知错误'));
       }
@@ -266,9 +269,23 @@
       this.cancelled = true;
       this.paused = false;
       this._clearStallWatch();
+      this._clearAutoCloseTimer();
       if (this.xhr) { try { this.xhr.abort(); } catch {} }
       this._setState('canceled');
       this._resolveWaiters();
+    }
+
+    // 用户主动关闭卡片：上传中则先取消，已完成/失败则直接移除
+    dismiss() {
+      this._clearAutoCloseTimer();
+      if (!this.cancelled && (this.state === 'uploading' || this.state === 'retrying' || this.state === 'paused')) {
+        this.cancel();
+      }
+      this.mgr.removeTask(this);
+    }
+
+    _clearAutoCloseTimer() {
+      if (this._autoCloseTimer) { clearTimeout(this._autoCloseTimer); this._autoCloseTimer = null; }
     }
 
     async _cleanup() {
@@ -298,6 +315,7 @@
         <div class="up-head">
           <span class="up-name" title=""></span>
           <span class="up-badge"></span>
+          <button type="button" class="up-btn up-close" title="关闭">×</button>
         </div>
         <div class="up-bar"><div class="up-fill"></div></div>
         <div class="up-meta">
@@ -320,12 +338,14 @@
       this.elPause = el.querySelector('.up-pause');
       this.elCancel = el.querySelector('.up-cancel');
       this.elSummary = el.querySelector('.up-summary');
+      this.elClose = el.querySelector('.up-close');
 
       this.elName.textContent = this.file.name;
       this.elName.title = this.file.name;
 
       this.elPause.addEventListener('click', () => { if (this.paused) this.resume(); else this.pause(); });
       this.elCancel.addEventListener('click', () => this.cancel());
+      this.elClose.addEventListener('click', () => this.dismiss());
 
       this.mgr.panel.appendChild(el);
       this._updateProgress();
