@@ -663,6 +663,55 @@ app.post('/api/admin/room/clear', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// 收集当前被房间消息或 room-files 索引引用的上传文件名
+function collectReferencedUploads() {
+  const referenced = new Set();
+  for (const arr of Object.values(roomFiles)) {
+    if (Array.isArray(arr)) arr.forEach((f) => referenced.add(f));
+  }
+  try {
+    for (const f of fs.readdirSync(MSG_DIR)) {
+      if (!f.endsWith('.json')) continue;
+      let arr;
+      try { arr = JSON.parse(fs.readFileSync(path.join(MSG_DIR, f), 'utf8')); } catch { continue; }
+      if (!Array.isArray(arr)) continue;
+      for (const m of arr) {
+        if (m && typeof m.url === 'string' && m.url.startsWith('/uploads/')) {
+          const raw = m.url.slice('/uploads/'.length);
+          referenced.add(decodeURIComponent(raw));
+          referenced.add(raw);
+        }
+      }
+    }
+  } catch { /* ignore */ }
+  return referenced;
+}
+
+// 列出未被任何房间引用的上传文件（孤儿文件）
+app.get('/api/admin/uploads/orphans', requireAdmin, (req, res) => {
+  const referenced = collectReferencedUploads();
+  let files = [];
+  try { files = fs.readdirSync(UPLOAD_DIR); } catch { }
+  const orphans = files.filter((f) => !referenced.has(f));
+  res.json({ orphans, count: orphans.length });
+});
+
+// 清理未被任何房间引用的上传文件（谨慎操作，删除后不可恢复）
+app.post('/api/admin/uploads/cleanup-orphans', requireAdmin, (req, res) => {
+  const referenced = collectReferencedUploads();
+  let files = [];
+  try { files = fs.readdirSync(UPLOAD_DIR); } catch { }
+  const removed = [];
+  const failed = [];
+  for (const f of files) {
+    if (referenced.has(f)) continue;
+    const p = path.join(UPLOAD_DIR, f);
+    try { fs.unlinkSync(p); removed.push(f); } catch (e) { failed.push({ file: f, error: e.message }); }
+  }
+  console.log(`[admin cleanup-orphans] removed=${removed.length}, failed=${failed.length}`);
+  res.json({ ok: true, removed, failed, removedCount: removed.length, failedCount: failed.length });
+});
+
 // ---------- WebSocket 房间管理 ----------
 
 const server = http.createServer(app);
