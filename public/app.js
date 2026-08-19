@@ -363,9 +363,25 @@
   }
 
   // ---------- WebSocket ----------
+  // 稳定的浏览器会话 ID：存于 sessionStorage，刷新 / 站内导航时保持不变；
+  // 关闭标签页或浏览器后由浏览器自动清除，下次进入时生成新的（符合「关浏览器才重新分配」）。
+  function getSessionId() {
+    let sid = sessionStorage.getItem('blink_sid');
+    if (!sid) {
+      try {
+        sid = crypto.randomUUID();
+      } catch {
+        // 极老浏览器兜底：时间戳 + 随机串，仍稳定于同一会话内
+        sid = 's' + Date.now().toString(16) + Math.random().toString(16).slice(2, 10);
+      }
+      sessionStorage.setItem('blink_sid', sid);
+    }
+    return sid;
+  }
+
   function wsUrl() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${location.host}/ws`;
+    return `${proto}//${location.host}/ws?sid=${encodeURIComponent(getSessionId())}`;
   }
 
   function connect() {

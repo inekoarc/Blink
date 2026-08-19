@@ -16,6 +16,32 @@ const { WebSocketServer } = require('ws');
 const { CHARACTER_POOL, HostIdAllocator } = require('./hostids');
 const hostAllocator = new HostIdAllocator(CHARACTER_POOL);
 
+// 浏览器会话 ID（sid）-> 身份角色名 的映射。
+// 客户端把 sid 存于 sessionStorage：刷新 / 站内导航时 sid 不变，从而复用同一角色名；
+// 关闭标签页或浏览器后 sessionStorage 被清除，重新进入会得到新 sid、自然生成新身份。
+// 映射中的名字始终占用池中名额（不会分配给其他会话），保证刷新前后同一身份且不与他人冲突。
+const sessionHost = new Map(); // sid -> name（Map 的插入顺序即 LRU 顺序）
+const SAFE_SID = /^[A-Za-z0-9_-]{8,80}$/;
+
+function sessionNameFor(sid) {
+  if (sessionHost.has(sid)) {
+    // 命中：复用同一角色名，并触顶 LRU 顺序
+    const name = sessionHost.get(sid);
+    sessionHost.delete(sid);
+    sessionHost.set(sid, name);
+    return name;
+  }
+  // 池名可能已被历史会话占满：若已无空闲名额，先淘汰最久未用的会话映射腾出名额
+  if (hostAllocator.used.size >= hostAllocator.total && sessionHost.size > 0) {
+    const oldest = sessionHost.keys().next().value;
+    hostAllocator.release(sessionHost.get(oldest));
+    sessionHost.delete(oldest);
+  }
+  const name = hostAllocator.assign();
+  sessionHost.set(sid, name);
+  return name;
+}
+
 const PORT = process.env.PORT || 7777;
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 50);
 const CHUNK_SIZE = 2 * 1024 * 1024; // 分片上传单片大小（2MB，须与前端一致）
@@ -783,11 +809,19 @@ function sendPresence(room) {
   broadcast(room, { type: 'presence', count: presence(room) });
 }
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   ws.room = null;
   ws.authed = false;
-  // 为新接入的主机分配唯一身份 ID（二次元角色名），并在连接建立后下发给客户端
-  ws.hostId = hostAllocator.assign();
+  // 浏览器会话 ID：从查询参数 ?sid= 读取（客户端存于 sessionStorage，刷新不变、关浏览器才变）
+  let sid = null;
+  try {
+    const q = new URL(req.url || '', 'http://localhost').searchParams;
+    const raw = q.get('sid') || '';
+    if (SAFE_SID.test(raw)) sid = raw;
+  } catch { /* ignore */ }
+  ws.sid = sid;
+  // 身份角色名：有 sid 则复用（保证刷新后同一身份），否则按原逻辑从池分配
+  ws.hostId = sid ? sessionNameFor(sid) : hostAllocator.assign();
   try { ws.send(JSON.stringify({ type: 'host', id: ws.hostId })); } catch { /* ignore */ }
 
   ws.on('message', (raw) => {
@@ -895,8 +929,10 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    // 主机断开：释放其占用的身份 ID，供后续复用
-    if (ws.hostId) { hostAllocator.release(ws.hostId); ws.hostId = null; }
+    // 会话绑定的身份名保留在 sessionHost 映射中（刷新可复用同一角色名），
+    // 仅当该连接没有 sid（旧客户端 / 非会话身份）时才归还池中供他人复用
+    if (ws.hostId && !ws.sid) { hostAllocator.release(ws.hostId); }
+    ws.hostId = null;
     if (ws.room && wsRooms.has(ws.room)) {
       wsRooms.get(ws.room).delete(ws);
       sendPresence(ws.room);
