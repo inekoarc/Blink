@@ -164,10 +164,19 @@ function loadRoomFiles() {
 
 let roomFiles = loadRoomFiles();
 
+// fileId -> room 映射：记录进行中的分片上传属于哪个房间，便于清空房间时清理中断的分片。
+const chunkRoom = new Map();
+
 function saveRoomFiles() {
-  fs.writeFile(ROOM_FILES_FILE, JSON.stringify(roomFiles), (err) => {
-    if (err) console.error('保存房间文件索引失败:', err.message);
-  });
+  // 同步原子写：先写临时文件再重命名，既避免写一半崩溃导致索引损坏，
+  // 又保证清房删除索引后「数据库记录」立即落盘（不依赖异步回调整点）。
+  const tmp = ROOM_FILES_FILE + '.tmp';
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(roomFiles));
+    fs.renameSync(tmp, ROOM_FILES_FILE);
+  } catch (e) {
+    console.error('保存房间文件索引失败:', e.message);
+  }
 }
 
 // 记录某个文件属于某个房间；幂等，不会重复添加。
@@ -211,19 +220,38 @@ function roomPassword(room) {
   return roomExists(room) ? (roomRegistry[room].password || null) : undefined;
 }
 
-// 彻底清空一个房间：删除消息文件、关联上传文件，并清内存缓存。
-// 不碰注册表、不踢人、不动连接（destroyRoom 负责那些）。
+// 彻底清空一个房间：删除消息文件、关联上传文件（含进行中分片），并清内存缓存。
+// 不碰注册表、不踢人、不动连接（destroyRoom 负责那些）。返回删除统计便于排查。
 function purgeRoomData(room) {
+  const r = safeRoom(room || '');
+  const removed = [];
+  const failed = [];
+  // 统一的文件删除辅助：记录成功/失败，避免静默吞掉执行失败
+  const rmFile = (fn) => {
+    const p = path.join(UPLOAD_DIR, String(fn));
+    try {
+      if (fs.existsSync(p)) { fs.unlinkSync(p); removed.push(fn); }
+    } catch (e) { failed.push({ file: fn, error: e.message }); }
+  };
+
   // 1) 优先根据「房间-文件索引」删除所有关联上传文件（覆盖上传成功但消息未发送的残留）
-  const indexed = getRoomFiles(room);
-  for (const fn of indexed) {
-    const p = path.join(UPLOAD_DIR, fn);
-    try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* ignore */ }
-  }
+  for (const fn of getRoomFiles(room)) rmFile(fn);
   removeRoomFiles(room);
 
-  // 2) 兜底：再读消息文件，删除其中引用的 /uploads/ 文件（处理旧数据 / 索引缺失的情况）
-  // 注意 URL 是 encodeURIComponent 编码的，需要 decode 后才能匹配磁盘上的中文文件名。
+  // 2) 清理该房间仍在进行中的分片上传（上传中途清空房间的场景）
+  //    这些分片尚未合并成最终文件、不在索引里，必须靠 chunkRoom 映射才能定位并删除。
+  let chunkRemoved = 0;
+  for (const [fid, froom] of chunkRoom) {
+    if (safeRoom(froom || '') === r) {
+      // 同步删除，确保 purgeRoomData 返回前分片目录已物理移除（避免「异步删除未执行」）
+      fs.rmSync(path.join(CHUNK_DIR, fid), { recursive: true, force: true });
+      chunkRoom.delete(fid);
+      chunkRemoved++;
+    }
+  }
+
+  // 3) 兜底：再读消息文件，删除其中引用的 /uploads/ 文件（处理旧数据 / 索引缺失的情况）
+  //    注意 URL 是 encodeURIComponent 编码的，需要 decode 后才能匹配磁盘上的中文文件名。
   const f = roomFile(room);
   if (fs.existsSync(f)) {
     try {
@@ -235,8 +263,7 @@ function purgeRoomData(room) {
             const decoded = decodeURIComponent(raw);
             // 同时删除编码名和解码名，避免各种历史残留
             for (const name of [decoded, raw]) {
-              const p = path.join(UPLOAD_DIR, path.basename('/uploads/' + name));
-              try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* ignore */ }
+              rmFile(path.basename(name));
             }
           }
         }
@@ -245,18 +272,20 @@ function purgeRoomData(room) {
     try { fs.unlinkSync(f); } catch { /* ignore */ }
   }
   delete messageCache[room];
+  return { removedCount: removed.length, failedCount: failed.length, failed, chunkRemoved };
 }
 
 // 清空房间：删除全部消息与文件，但保留房间本身（注册表/密码/备注/在线连接均保留）
 function clearRoom(room, reason) {
   reason = reason || '房间消息已被管理员清空';
-  purgeRoomData(room);
+  const stats = purgeRoomData(room);
   // 通知在线用户同步清空本地历史（房间与连接保留）
   if (wsRooms.has(room)) {
     for (const client of [...wsRooms.get(room)]) {
       try { client.send(JSON.stringify({ type: 'cleared', msg: reason })); } catch { /* ignore */ }
     }
   }
+  return stats;
 }
 
 // 退房 / 自动销毁：彻底清理房间一切痕迹（消息、文件、注册表、在线连接）
@@ -441,6 +470,10 @@ app.post('/api/upload/chunk', (req, res) => {
       console.error(`[upload chunk error] ip=${req.ip || '-'} fileId=${fid} index=${idx} msg=no file received`);
       return res.status(400).json({ error: '未收到分片喵~' });
     }
+    // 登记 fileId -> room，便于清空房间时清理进行中的分片
+    const fid = String((req.body && req.body.fileId) || '');
+    const room = String((req.body && req.body.room) || '');
+    if (fid && room) chunkRoom.set(fid, room);
     res.json({ ok: true, index: parseInt(req.body.index, 10) });
   });
 });
@@ -462,6 +495,7 @@ app.get('/api/upload/status', (req, res) => {
 // 取消上传：清理该 fileId 的临时分片目录
 app.post('/api/upload/cancel', (req, res) => {
   const fid = String((req.body && req.body.fileId) || '');
+  if (chunkRoom.has(fid)) chunkRoom.delete(fid); // 注销分片映射
   if (!SAFE_FILE_ID.test(fid)) return res.status(400).json({ error: '无效的 fileId' });
   fs.rm(path.join(CHUNK_DIR, fid), { recursive: true, force: true }, () => {});
   res.json({ ok: true });
@@ -516,7 +550,16 @@ app.post('/api/upload/complete', async (req, res) => {
   }
   // 清理临时分片
   fs.rm(dir, { recursive: true, force: true }, () => {});
+  // 注销分片映射
+  delete chunkRoom[fid];
   // 记录文件与房间的关联，便于删除房间时一并清理
+  const fileRoom = safeRoom(String(body.room || ''));
+  if (!roomExists(fileRoom)) {
+    // 房间已被销毁（如清空后又到期自动销毁），刚合并的文件属于已不存在的房间，
+    // 直接删除避免成为孤儿文件永久残留。
+    try { fs.unlinkSync(finalPath); } catch { /* ignore */ }
+    return res.status(409).json({ error: '房间已不存在，上传已取消' });
+  }
   recordRoomFile(String(body.room || ''), finalName);
   const safeName = String(body.name || 'file')
     .replace(/[\\/:*?"<>|\n\r\t]/g, '_')
@@ -659,8 +702,8 @@ app.post('/api/admin/room/destroy', requireAdmin, (req, res) => {
 app.post('/api/admin/room/clear', requireAdmin, (req, res) => {
   const room = safeRoom(req.body && req.body.room);
   if (!roomExists(room)) return res.status(404).json({ error: '房间不存在喵~' });
-  clearRoom(room);
-  res.json({ ok: true });
+  const stats = clearRoom(room);
+  res.json({ ok: true, ...stats });
 });
 
 // 收集当前被房间消息或 room-files 索引引用的上传文件名
